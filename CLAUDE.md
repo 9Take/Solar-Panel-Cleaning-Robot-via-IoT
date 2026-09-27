@@ -23,7 +23,7 @@ Keep the progress tables in `README.md` (Thai + English sections) in sync with t
   - [x] 2b. TCP server `MockPlcServer` (`python -m app.sim`, compose `--profile sim`, host port 5020) + network tests
   - [x] 2c. Simulated ladder behavior per `docs/robot-operation.md` using **assumed** M/D tags (owner's choice); replace with real ladder tags later
     - `app/codec.py` (shared with the client), `app/sim/ladder.py` (reference state machine), `app/sim/plant.py` (physics, buttons, E-stop, PZEM, fake Pi battery), `app/sim/runner.py`
-- [ ] **3. Read client** — connect to PLC/mock, read tags by name (read-only), reconnect on failure
+- [x] **3. Read client** — `app/plc_client.py` (`PlcClient`, `plan_reads`): read tags by name (read-only), contiguous-block reads never spanning gaps, `PlcOfflineError` + reconnect with backoff, `PlcReadError` for Modbus exceptions. Dev CLI: `python -m app.read [names] [--watch]`
 - [ ] **4. Polling + logging** — poll status every `PLC_POLL_INTERVAL_S`, log changes/alarms
 - [ ] **5. Commands** — Start/Stop/Return/Reset as guarded momentary pulses (write allowed only for `dir: write/rw` tags). Mode is read-only (front switch X3)
 - [ ] **6. Battery (Tuya) + heartbeat** — read battery % from Tuya Cloud API, write `battery_pct` + `pi_heartbeat` to the PLC; PZEM values read from PLC D registers
