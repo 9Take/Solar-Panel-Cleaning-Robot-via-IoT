@@ -37,6 +37,8 @@ flowchart LR
 
 ### ความคืบหน้า
 
+คู่มือแต่ละขั้น (ทำงานยังไง, วิธีใช้, วิธีเทส): [`docs/process/`](docs/process/README.md)
+
 | ขั้น | งาน | สถานะ |
 |---|---|---|
 | 1 | Config + tag map + แปลง address ของ Delta | เสร็จ |
@@ -45,7 +47,7 @@ flowchart LR
 | 4 | Polling + logging | เสร็จ (SQLite) |
 | 5 | คำสั่ง Start/Stop/Return/Reset | เสร็จ |
 | 6 | แบตเตอรี่ / การชาร์จ | เสร็จ (Tuya + heartbeat) |
-| 7 | ตั้งเวลา | ยังไม่เริ่ม |
+| 7 | ตั้งเวลา | เสร็จ (SQLite + CLI) |
 | 8 | UI / API | ยังไม่เริ่ม |
 
 ### โครงสร้างไฟล์
@@ -184,6 +186,22 @@ db.commit()
 
 คำสั่งที่รอเกิน 5 วินาทีโดยไม่มี gateway รับ จะหมดอายุและไม่ถูกส่ง
 
+### ตั้งเวลาทำความสะอาด (โหมด Auto)
+
+gateway เช็กตาราง `schedules` ใน `logs/gateway.db` ทุก 5 วินาที ถึงเวลาแล้วจะส่ง `cycles` (ถ้าระบุ) กับ `start` ผ่าน commander ตามกฎความปลอดภัยของขั้นที่ 5 เวลาอิงตาม `SCHEDULE_TZ` (ค่าเริ่มต้น Asia/Bangkok) แก้ตารางแล้วมีผลทันที ไม่ต้อง restart
+
+```bash
+.venv/bin/python -m app.schedule list
+.venv/bin/python -m app.schedule add 08:00 --days mon,wed,fri --cycles 2
+.venv/bin/python -m app.schedule add 16:30            # ทุกวัน ใช้จำนวนรอบที่ตั้งไว้ใน PLC
+.venv/bin/python -m app.schedule disable 2            # enable / remove ได้เหมือนกัน
+```
+
+- ทำงานวันละครั้งต่อรายการ ไม่ลองซ้ำ
+- พลาดเวลาเกิน 60 วินาที (gateway หรือ PLC ล่ม) → ข้าม และบันทึก event `missed`
+- หุ่นไม่พร้อม (โหมด Manual, ไม่อยู่ Home, แบต < 80 %, มี alarm, PLC offline) → ข้าม และบันทึกเหตุผลใน event `skipped`
+- ดูผลได้ที่ตาราง `events` (`kind = 'schedule'`)
+
 ### อ่านค่าจาก PLC (หรือ Mock)
 
 อ่านตามชื่อ tag อย่างเดียว ไม่เขียนอะไรลง PLC ใช้ค่า `PLC_HOST` / `PLC_PORT` จาก `.env`
@@ -252,6 +270,8 @@ flowchart LR
 
 ### Progress
 
+Per-step guides (how it works, usage, testing; in Thai): [`docs/process/`](docs/process/README.md)
+
 | Step | Task | Status |
 |---|---|---|
 | 1 | Config + tag map + Delta address conversion | Done |
@@ -260,7 +280,7 @@ flowchart LR
 | 4 | Polling + logging | Done (SQLite) |
 | 5 | Start/Stop/Return/Reset commands | Done |
 | 6 | Battery / charging | Done (Tuya + heartbeat) |
-| 7 | Schedule | Not started |
+| 7 | Schedule | Done (SQLite + CLI) |
 | 8 | UI / API | Not started |
 
 ### Project Structure
@@ -398,6 +418,23 @@ db.commit()
 ```
 
 A command waiting more than 5 s without a gateway to pick it up expires and is never sent.
+
+
+### Scheduled cleaning (Auto mode)
+
+The gateway checks the `schedules` table in `logs/gateway.db` every 5 s. When a run is due it sends `cycles` (if set) and `start` through the commander, so the step 5 safety rules apply. Times use `SCHEDULE_TZ` (default Asia/Bangkok). Changes apply without a restart.
+
+```bash
+.venv/bin/python -m app.schedule list
+.venv/bin/python -m app.schedule add 08:00 --days mon,wed,fri --cycles 2
+.venv/bin/python -m app.schedule add 16:30            # every day, keep the PLC's cycles setpoint
+.venv/bin/python -m app.schedule disable 2            # also: enable / remove
+```
+
+- Each entry runs at most once a day; no retries.
+- Missed by more than 60 s (gateway or PLC down) → skipped, `missed` event.
+- Robot not ready (Manual mode, not at Home, battery < 80 %, alarm, PLC offline) → skipped, reason in a `skipped` event.
+- Results are in the `events` table (`kind = 'schedule'`).
 
 ### Reading the PLC (or the mock)
 
