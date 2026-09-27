@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.robot import Alarm, State
+from app.robot import BATTERY_START_MIN_PCT, Alarm, State
 
 TOWARD_END_2 = True   # drive_dir = 1 -> moving toward X1 (assumed polarity)
 TOWARD_END_1 = False
@@ -22,7 +22,7 @@ COMMANDS = ("cmd_start", "cmd_stop", "cmd_return", "cmd_reset_alarm")
 class LadderParams:
     battery_low_pct: float = 25        # below -> return home
     battery_critical_pct: float = 20   # below -> alarm code 2 (warning)
-    battery_start_min_pct: float = 80  # needed to leave home
+    battery_start_min_pct: float = BATTERY_START_MIN_PCT  # needed to leave home
     end_pause_s: float = 2.0           # pause at the far end before reversing
     heartbeat_timeout_s: float = 10.0  # pi_heartbeat unchanged this long -> battery unknown
     default_travel_s: float = 20.0     # end-to-end time until the first full traverse is measured
@@ -144,8 +144,9 @@ class LadderSim:
         battery_low = battery is not None and battery < self.p.battery_low_pct
 
         moving_state = self.state in (State.CLEANING, State.RETURNING)
-        want_start = cmd["cmd_start"] or (button_edge and not moving_state)
         want_stop = cmd["cmd_stop"] or (button_edge and moving_state)
+        # Stop wins: a stop request in the same scan cancels any start request.
+        want_start = (cmd["cmd_start"] or (button_edge and not moving_state)) and not cmd["cmd_stop"]
 
         if self.state == State.HOME:
             may_start = heartbeat_ok and battery >= self.p.battery_start_min_pct

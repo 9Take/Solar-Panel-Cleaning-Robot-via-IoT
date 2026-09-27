@@ -1,6 +1,7 @@
 """Entry point: `python -m app` — the gateway service.
 
-Polls the PLC (read-only), logs changes, and records history in SQLite.
+Polls the PLC, logs changes, records history in SQLite, and executes
+commands queued in the `commands` table (dashboard / CLI).
 Runs until SIGINT/SIGTERM (`docker compose down`).
 """
 
@@ -8,6 +9,8 @@ import asyncio
 import logging
 import signal
 
+from app.command_queue import CommandQueueWorker
+from app.commander import PlcCommander
 from app.config import Settings
 from app.history import HistoryStore
 from app.plc_client import PlcClient
@@ -29,7 +32,8 @@ async def main() -> None:
     plc = PlcClient.from_settings(settings, tags)
     poller = Poller(plc, store, settings.plc_poll_interval_s,
                     settings.snapshot_interval_s, settings.history_retention_days)
-    task = asyncio.create_task(poller.run_forever())
+    worker = CommandQueueWorker(store, PlcCommander(plc))
+    tasks = [asyncio.create_task(poller.run_forever()), asyncio.create_task(worker.run_forever())]
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -38,7 +42,8 @@ async def main() -> None:
     await stop.wait()
 
     log.info("Gateway stopping")
-    task.cancel()
+    for task in tasks:
+        task.cancel()
     plc.close()
     store.close()
 

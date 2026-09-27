@@ -43,7 +43,7 @@ flowchart LR
 | 2 | PLC จำลอง (Mock) | เสร็จ (datastore, TCP server, จำลองการทำงานหุ่น) |
 | 3 | Client อ่านค่า (read-only) | เสร็จ |
 | 4 | Polling + logging | เสร็จ (SQLite) |
-| 5 | คำสั่ง Start/Stop/Mode | ยังไม่เริ่ม |
+| 5 | คำสั่ง Start/Stop/Return/Reset | เสร็จ |
 | 6 | แบตเตอรี่ / การชาร์จ | ยังไม่เริ่ม |
 | 7 | ตั้งเวลา | ยังไม่เริ่ม |
 | 8 | UI / API | ยังไม่เริ่ม |
@@ -156,6 +156,32 @@ events = pd.read_sql("SELECT datetime(ts, 'unixepoch', 'localtime') AS time, kin
                      "FROM events ORDER BY id DESC LIMIT 50", db)
 ```
 
+### สั่งงานหุ่น (Start / Stop / Return / Reset)
+
+คำสั่งทุกทางผ่าน**คิวในตาราง `commands`** แล้ว gateway เป็นคนส่งเข้า PLC ตามกฎความปลอดภัย (ดู `app/commander.py`) — ต้องมี `python -m app` รันอยู่
+
+```bash
+.venv/bin/python -m app.cmd start       # เริ่มทำความสะอาด
+.venv/bin/python -m app.cmd stop        # หยุดอยู่กับที่ (ไม่มีวันถูกบล็อก)
+.venv/bin/python -m app.cmd return      # กลับจุดพักที่ใกล้ที่สุด
+.venv/bin/python -m app.cmd reset       # ล้าง alarm (ต้องปลด E-stop ก่อน)
+.venv/bin/python -m app.cmd cycles 3    # จำนวนรอบโหมด Auto (1–100)
+```
+
+จาก dashboard (Python):
+
+```python
+import sqlite3, time
+db = sqlite3.connect("logs/gateway.db")
+cid = db.execute("INSERT INTO commands (ts, command, source) VALUES (?, 'start', 'dashboard')",
+                 (time.time(),)).lastrowid
+db.commit()
+# แล้วอ่านผล: SELECT status, result FROM commands WHERE id = ?
+#   status: pending → running → done | rejected | ignored | not_acknowledged | not_started | error | expired
+```
+
+คำสั่งที่รอเกิน 5 วินาทีโดยไม่มี gateway รับ จะหมดอายุและไม่ถูกส่ง
+
 ### อ่านค่าจาก PLC (หรือ Mock)
 
 อ่านตามชื่อ tag อย่างเดียว ไม่เขียนอะไรลง PLC ใช้ค่า `PLC_HOST` / `PLC_PORT` จาก `.env`
@@ -230,7 +256,7 @@ flowchart LR
 | 2 | Mock PLC | Done (datastore, TCP server, robot simulation) |
 | 3 | Read client (read-only) | Done |
 | 4 | Polling + logging | Done (SQLite) |
-| 5 | Start/Stop/Mode commands | Not started |
+| 5 | Start/Stop/Return/Reset commands | Done |
 | 6 | Battery / charging | Not started |
 | 7 | Schedule | Not started |
 | 8 | UI / API | Not started |
@@ -342,6 +368,32 @@ battery = pd.read_sql(
 events = pd.read_sql("SELECT datetime(ts, 'unixepoch', 'localtime') AS time, kind, message "
                      "FROM events ORDER BY id DESC LIMIT 50", db)
 ```
+
+### Commanding the robot (Start / Stop / Return / Reset)
+
+Every command goes through the **`commands` queue table**; the gateway sends it to the PLC under the safety rules (see `app/commander.py`). `python -m app` must be running.
+
+```bash
+.venv/bin/python -m app.cmd start       # start cleaning
+.venv/bin/python -m app.cmd stop        # stop where it is (never blocked)
+.venv/bin/python -m app.cmd return      # return to the nearest end
+.venv/bin/python -m app.cmd reset       # clear an alarm (release the E-stop first)
+.venv/bin/python -m app.cmd cycles 3    # cycles per Auto run (1-100)
+```
+
+From the dashboard (Python):
+
+```python
+import sqlite3, time
+db = sqlite3.connect("logs/gateway.db")
+cid = db.execute("INSERT INTO commands (ts, command, source) VALUES (?, 'start', 'dashboard')",
+                 (time.time(),)).lastrowid
+db.commit()
+# then poll: SELECT status, result FROM commands WHERE id = ?
+#   status: pending -> running -> done | rejected | ignored | not_acknowledged | not_started | error | expired
+```
+
+A command waiting more than 5 s without a gateway to pick it up expires and is never sent.
 
 ### Reading the PLC (or the mock)
 

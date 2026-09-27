@@ -6,7 +6,8 @@
 - Connection loss raises PlcOfflineError; the next call reconnects, with
   exponential backoff between failed attempts.
 
-No write methods here on purpose (commands come in step 5).
+The public API is read-only. Writing is only done by app.commander.PlcCommander
+through _write(), which enforces the command safety rules.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from dataclasses import dataclass
 from pymodbus.client import AsyncModbusTcpClient
 from pymodbus.exceptions import ModbusException
 
-from app.codec import Value, decode
+from app.codec import Value, decode, encode
 from app.config import Settings
 from app.delta import Area
 from app.tags import Tag, TagMap
@@ -97,6 +98,7 @@ class PlcClient:
         self._backoff_max = backoff_max_s
         self._backoff = backoff_initial_s
         self._next_attempt = 0.0
+        self._io_lock = asyncio.Lock()   # one Modbus request at a time (poller + commander share it)
 
     @classmethod
     def from_settings(cls, settings: Settings, tags: TagMap) -> PlcClient:
@@ -153,7 +155,8 @@ class PlcClient:
             Area.HOLDING_REGISTER: self._client.read_holding_registers,
         }[block.area]
         try:
-            response = await request(block.address, count=block.count, device_id=self.unit_id)
+            async with self._io_lock:
+                response = await request(block.address, count=block.count, device_id=self.unit_id)
         except (ModbusException, OSError, asyncio.TimeoutError) as exc:
             self._drop_connection(exc)
             raise PlcOfflineError(f"connection to {self.host}:{self.port} lost: {exc}") from exc
@@ -171,6 +174,28 @@ class PlcClient:
                 raw = response.bits[offset]
             values[tag.name] = decode(tag, raw)
         return values
+
+    async def _write(self, name: str, value: Value) -> None:
+        """Write one tag. Internal: use app.commander.PlcCommander, never call directly."""
+        tag = self.tags[name]
+        if not tag.writable:
+            raise PermissionError(f"Tag {name!r} is dir: {tag.dir.value}; writing is not allowed")
+        if tag.addr.area is Area.DISCRETE_INPUT:
+            raise PermissionError(f"Tag {name!r} is a PLC input ({tag.device}); cannot be written")
+        raw = encode(tag, value)
+        if not await self.connect():
+            raise PlcOfflineError(f"cannot connect to {self.host}:{self.port}")
+        try:
+            async with self._io_lock:
+                if tag.addr.is_bit:
+                    response = await self._client.write_coil(tag.addr.address, raw, device_id=self.unit_id)
+                else:
+                    response = await self._client.write_registers(tag.addr.address, raw, device_id=self.unit_id)
+        except (ModbusException, OSError, asyncio.TimeoutError) as exc:
+            self._drop_connection(exc)
+            raise PlcOfflineError(f"connection to {self.host}:{self.port} lost: {exc}") from exc
+        if response.isError():
+            raise PlcReadError(f"PLC rejected write of {name}: Modbus exception {response.exception_code}")
 
     def _drop_connection(self, exc: BaseException) -> None:
         log.warning("PLC connection lost: %s", exc)

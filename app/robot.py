@@ -23,6 +23,11 @@ class Alarm(IntEnum):
     HEARTBEAT_LOST = 5
 
 
+# Spec thresholds (docs/robot-operation.md). The ladder enforces them; the Pi only
+# uses them to explain why the robot did not do something.
+BATTERY_START_MIN_PCT = 80
+
+
 def describe(enum_cls: type[IntEnum], code) -> str:
     """'Home' for State 3; 'unknown(9)' for codes the spec does not define."""
     try:
