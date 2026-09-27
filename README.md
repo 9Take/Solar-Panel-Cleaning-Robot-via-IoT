@@ -40,7 +40,7 @@ flowchart LR
 | ขั้น | งาน | สถานะ |
 |---|---|---|
 | 1 | Config + tag map + แปลง address ของ Delta | เสร็จ |
-| 2 | PLC จำลอง (Mock) | ยังไม่เริ่ม |
+| 2 | PLC จำลอง (Mock) | 2a เสร็จ (datastore), 2b–2c กำลังทำ |
 | 3 | Client อ่านค่า (read-only) | ยังไม่เริ่ม |
 | 4 | Polling + logging | ยังไม่เริ่ม |
 | 5 | คำสั่ง Start/Stop/Mode | ยังไม่เริ่ม |
@@ -181,7 +181,7 @@ flowchart LR
 | Step | Task | Status |
 |---|---|---|
 | 1 | Config + tag map + Delta address conversion | Done |
-| 2 | Mock PLC | Not started |
+| 2 | Mock PLC | 2a done (datastore), 2b–2c in progress |
 | 3 | Read client (read-only) | Not started |
 | 4 | Polling + logging | Not started |
 | 5 | Start/Stop/Mode commands | Not started |
