@@ -17,6 +17,10 @@ class Settings(BaseSettings):
 
     plc_tags_file: Path = Path("config/plc_tags.yaml")
 
+    # Mock PLC (app.sim) bind address. Ports < 1024 need root outside Docker.
+    sim_host: str = "0.0.0.0"
+    sim_port: int = Field(502, ge=0, le=65535)
+
     # SecretStr hides the value in repr/logs; call .get_secret_value() only where needed.
     api_key: SecretStr | None = None
     api_secret: SecretStr | None = None

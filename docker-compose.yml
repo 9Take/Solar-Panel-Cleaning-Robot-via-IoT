@@ -18,5 +18,10 @@ services:
     image: solarbot-gateway:latest
     command: ["python", "-m", "app.sim"]
     env_file: .env
+    environment:          # fixed inside the container, overrides .env
+      SIM_HOST: "0.0.0.0"
+      SIM_PORT: "502"
+    ports:
+      - "5020:502"   # reach the mock from the host (e.g. Modbus Poll) at localhost:5020
     volumes:
       - ./config:/app/config:ro
