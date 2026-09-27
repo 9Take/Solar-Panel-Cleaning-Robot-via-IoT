@@ -9,18 +9,22 @@ Data source (checked every refresh):
   * Otherwise a built-in simulation, with a sidebar to play the hardware.
 
 The schedule section edits the gateway's `schedules` table (app/schedule.py).
-Weather is always simulated for now (source TBD); solar power is not read yet.
+Weather comes from Open-Meteo (free, no key) for WEATHER_LAT / WEATHER_LON;
+without them, or if the request fails, it is simulated. Solar power is not read yet.
 """
 import json
 import os
 import random
 import sqlite3
 import time
+import urllib.parse
+import urllib.request
 from datetime import datetime, timedelta
 from datetime import time as dtime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 import yaml
@@ -30,9 +34,26 @@ st.markdown("<style>[data-testid='stMetricValue']{font-size:1.5rem}</style>",
             unsafe_allow_html=True)
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def load_dotenv(path):
+    """Read KEY=VALUE lines from the repo's .env into os.environ (real env wins)."""
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        key, sep, value = line.partition("=")
+        if sep and not line.lstrip().startswith("#"):
+            os.environ.setdefault(key.strip(), value.strip())
+
+
+load_dotenv(ROOT / ".env")
 TAGS_FILE = ROOT / os.environ.get("PLC_TAGS_FILE", "config/plc_tags.yaml")
 HISTORY_DB = ROOT / os.environ.get("HISTORY_DB", "logs/gateway.db")
 SCHEDULE_TZ = ZoneInfo(os.environ.get("SCHEDULE_TZ", "Asia/Bangkok"))
+WEATHER_LAT = os.environ.get("WEATHER_LAT", "")
+WEATHER_LON = os.environ.get("WEATHER_LON", "")
+WEATHER_PLACE = os.environ.get("WEATHER_PLACE", "")
+WEATHER_TTL_S = int(os.environ.get("WEATHER_REFRESH_S", "600"))
 
 # robot_state / alarm_code values, mirrored from app/robot.py
 IDLE, CLEANING, RETURNING, HOME, ALARM = range(5)
@@ -51,16 +72,79 @@ STALE_S = 5  # latest row older than this -> gateway not running
 
 
 # ============================================================
-# Weather (simulated)
+# Weather: Open-Meteo, simulated fallback
 # ============================================================
-def get_weather():
+# WMO weather codes used by Open-Meteo
+WMO_TEXT = {
+    0: "ท้องฟ้าแจ่มใส", 1: "มีเมฆเล็กน้อย", 2: "มีเมฆบางส่วน", 3: "เมฆมาก",
+    45: "หมอก", 48: "หมอกน้ำค้างแข็ง",
+    51: "ฝนละอองเบา", 53: "ฝนละออง", 55: "ฝนละอองหนัก",
+    61: "ฝนเล็กน้อย", 63: "ฝนปานกลาง", 65: "ฝนหนัก",
+    80: "ฝนตกเป็นช่วง", 81: "ฝนตกเป็นช่วงปานกลาง", 82: "ฝนตกหนักเป็นช่วง",
+    95: "พายุฝนฟ้าคะนอง", 96: "พายุฝนฟ้าคะนอง ลูกเห็บ", 99: "พายุฝนฟ้าคะนอง ลูกเห็บหนัก",
+}
+
+
+def fetch_json(url, params):
+    req = urllib.request.Request(f"{url}?{urllib.parse.urlencode(params)}",
+                                 headers={"User-Agent": "solar-robot-dashboard"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return json.load(resp)
+
+
+@st.cache_data(ttl=WEATHER_TTL_S, show_spinner=False)
+def fetch_weather(lat, lon, tz):
+    """Current weather, 8-hour rain forecast and PM10 from Open-Meteo."""
+    base = {"latitude": lat, "longitude": lon, "timezone": tz}
+    fc = fetch_json("https://api.open-meteo.com/v1/forecast", {
+        **base,
+        "current": "temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation,"
+                   "weather_code,shortwave_radiation",
+        "hourly": "precipitation_probability,temperature_2m",
+        "forecast_hours": 8,
+    })
+    try:
+        aq = fetch_json("https://air-quality-api.open-meteo.com/v1/air-quality",
+                        {**base, "current": "pm10"})
+        dust = aq["current"]["pm10"]
+    except (OSError, KeyError, ValueError):
+        dust = None   # air quality is optional
+    cur, hr = fc["current"], fc["hourly"]
+    return {
+        "source": "Open-Meteo",
+        "updated": cur["time"][11:16],
+        "condition": WMO_TEXT.get(cur["weather_code"], f"รหัสอากาศ {cur['weather_code']}"),
+        "temp_c": cur["temperature_2m"],
+        "humidity": cur["relative_humidity_2m"],
+        "wind_kmh": cur["wind_speed_10m"],
+        "rain_now_mm": cur["precipitation"],
+        "rain_chance": hr["precipitation_probability"][0],
+        "irradiance": cur["shortwave_radiation"],
+        "dust": dust,
+        "hourly": [{"เวลา": t[11:16], "โอกาสฝน (%)": p, "อุณหภูมิ (°C)": c}
+                   for t, p, c in zip(hr["time"], hr["precipitation_probability"],
+                                      hr["temperature_2m"])],
+    }
+
+
+def simulated_weather(reason):
     now = datetime.now()
     rain = [5, 5, 10, 20, 45, 70, 60, 30]
     temp = [32, 33, 34, 34, 33, 30, 29, 28]
     hourly = [{"เวลา": (now + timedelta(hours=h)).strftime("%H:00"),
                "โอกาสฝน (%)": rain[h], "อุณหภูมิ (°C)": temp[h]} for h in range(8)]
-    return {"condition": "มีเมฆบางส่วน", "temp_c": 32.4, "humidity": 62, "wind_kmh": 12,
+    return {"source": None, "reason": reason, "updated": None, "condition": "มีเมฆบางส่วน",
+            "temp_c": 32.4, "humidity": 62, "wind_kmh": 12, "rain_now_mm": 0.0,
             "rain_chance": 10, "irradiance": 780, "dust": 58, "hourly": hourly}
+
+
+def get_weather():
+    if not (WEATHER_LAT and WEATHER_LON):
+        return simulated_weather("ยังไม่ได้ตั้ง WEATHER_LAT / WEATHER_LON ใน .env")
+    try:
+        return fetch_weather(WEATHER_LAT, WEATHER_LON, str(SCHEDULE_TZ))
+    except (OSError, KeyError, ValueError) as exc:
+        return simulated_weather(f"ดึงข้อมูลจาก Open-Meteo ไม่ได้ ({exc.__class__.__name__})")
 
 
 # ============================================================
@@ -389,35 +473,45 @@ sim["mode"], sim["estop"] = mode, estop
 # Top: weather
 # ============================================================
 st.title("☀️ Solar Panel Cleaning Robot")
-st.caption(("ข้อมูลจริงจาก gateway" if LIVE else "ข้อมูลจำลอง (Mockup)")
-           + " · สภาพอากาศเป็นข้อมูลจำลอง")
-
 w = get_weather()
+st.caption(("ข้อมูลหุ่นยนต์จาก gateway" if LIVE else "ข้อมูลหุ่นยนต์จำลอง (Mockup)")
+           + (" · สภาพอากาศจาก Open-Meteo" if w["source"] else " · สภาพอากาศจำลอง"))
+
 with st.container(border=True):
-    st.subheader(f"🌤️ สภาพอากาศ · {w['condition']}")
+    place = f" · {WEATHER_PLACE}" if WEATHER_PLACE and w["source"] else ""
+    st.subheader(f"🌤️ สภาพอากาศ · {w['condition']}{place}")
+    if not w["source"]:
+        st.caption(f"ข้อมูลจำลอง: {w['reason']}")
     c = st.columns(6)
-    c[0].metric("อุณหภูมิ", f"{w['temp_c']} °C")
-    c[1].metric("ความชื้น", f"{w['humidity']} %")
-    c[2].metric("ลม", f"{w['wind_kmh']} km/h")
-    c[3].metric("โอกาสฝน", f"{w['rain_chance']} %")
-    c[4].metric("แสงแดด", f"{w['irradiance']} W/m²")
-    c[5].metric("ฝุ่น PM10", f"{w['dust']} µg/m³")
+    c[0].metric("อุณหภูมิ", f"{w['temp_c']:.1f} °C")
+    c[1].metric("ความชื้น", f"{w['humidity']:.0f} %")
+    c[2].metric("ลม", f"{w['wind_kmh']:.0f} km/h")
+    c[3].metric("โอกาสฝน", f"{w['rain_chance']:.0f} %")
+    c[4].metric("แสงแดด", f"{w['irradiance']:.0f} W/m²")
+    c[5].metric("ฝุ่น PM10", "—" if w["dust"] is None else f"{w['dust']:.0f} µg/m³")
 
     left, right = st.columns([2, 1])
     with left:
         st.caption("โอกาสฝน 8 ชั่วโมงข้างหน้า")
-        st.bar_chart(pd.DataFrame(w["hourly"]).set_index("เวลา")["โอกาสฝน (%)"],
-                     height=160, sort=False)
+        rain = alt.Chart(pd.DataFrame(w["hourly"])).mark_bar(color="#4C8BF5").encode(
+            x=alt.X("เวลา:N", sort=None, title=None, axis=alt.Axis(labelAngle=0)),
+            y=alt.Y("โอกาสฝน (%):Q", scale=alt.Scale(domain=[0, 100]), title="%"),
+            tooltip=["เวลา", "โอกาสฝน (%)", "อุณหภูมิ (°C)"],
+        ).properties(height=160)
+        st.altair_chart(rain, width="stretch")
     with right:
         st.caption("คำแนะนำ")
         rain_soon = max(h["โอกาสฝน (%)"] for h in w["hourly"][:3])
-        if rain_soon >= 60 or w["wind_kmh"] >= 30:
+        if w["rain_now_mm"] > 0:
+            st.error(f"ไม่ควรทำความสะอาดตอนนี้ · ฝนกำลังตก ({w['rain_now_mm']} mm)")
+        elif rain_soon >= 60 or w["wind_kmh"] >= 30:
             st.error("ไม่ควรทำความสะอาดตอนนี้ (ฝน/ลมแรง)")
         elif w["dust"] >= 50:
             st.success("เหมาะทำความสะอาด ฝุ่นค่อนข้างสูง")
         else:
             st.success("เหมาะทำความสะอาด")
-        st.caption(f"ฝนสูงสุดใน 3 ชม.: {rain_soon}%")
+        st.caption(f"ฝนสูงสุดใน 3 ชม.: {rain_soon}%"
+                   + (f" · อัปเดต {w['updated']}" if w["updated"] else ""))
 
 
 # ============================================================

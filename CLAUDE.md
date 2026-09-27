@@ -133,11 +133,11 @@ Single source of truth: `config/plc_tags.yaml`. Code refers to tags by name, nev
 
 ## Dashboard
 
-`streamlit run dashboard/app.py` from the repo root. Reads `latest` / `snapshots` / `events` from `HISTORY_DB` (read-only) and edits the step 7 `schedules` table (its schema and validation are mirrored in `dashboard/app.py` so the dashboard needs no Modbus dependencies — keep them in sync with `app/schedule.py`); without the DB it runs its own simulation with a sidebar for the hardware (mode switch, E-stop, Start/Stop, Reset, schedule trigger). Weather is simulated for now; solar power is not read by the gateway yet (step 6 reads battery % only).
+`streamlit run dashboard/app.py` from the repo root. Reads `latest` / `snapshots` / `events` from `HISTORY_DB` (read-only) and edits the step 7 `schedules` table (its schema and validation are mirrored in `dashboard/app.py` so the dashboard needs no Modbus dependencies — keep them in sync with `app/schedule.py`); without the DB it runs its own simulation with a sidebar for the hardware (mode switch, E-stop, Start/Stop, Reset, schedule trigger). Weather comes from **Open-Meteo** (free, no key; forecast + air-quality APIs via stdlib `urllib`, cached `WEATHER_REFRESH_S`) for `WEATHER_LAT` / `WEATHER_LON` in `.env`; the dashboard reads the repo's `.env` itself. Without coordinates or on a request error it falls back to simulated weather and says why. Solar power is not read by the gateway yet (step 6 reads battery % only).
 
 Layout decided by the owner (top to bottom):
 
-1. **Weather** at the top (temp, humidity, wind, rain chance, irradiance, dust, rain forecast, "OK to clean?" hint). Source TBD.
+1. **Weather** at the top (temp, humidity, wind, rain chance, irradiance, dust, rain forecast, "OK to clean?" hint: not while raining, rain chance ≥ 60 % in the next 3 h, or wind ≥ 30 km/h).
 2. **Robot status** — only three states for the user: **working** (`robot_state` Cleaning/Returning), **stopped** (Idle, or Alarm), **home** (Home). Show `alarm_code` text.
 3. **Position** — only three points: end 1 (X0), between panels, end 2 (X1). Whichever end the robot rests at is Home. No percentage track.
 4. **Emergency** — full-width red banner when `estop_ok` = 0. Also banners for PLC offline and a stale `latest` row (gateway down).
@@ -163,4 +163,4 @@ Layout decided by the owner (top to bottom):
 - Full tag map (M/D devices used in the ladder for commands, status, alarms, battery)
 - Battery/charging measurement: which D registers, scaling/units
 - Whether remote (internet) access to the dashboard is needed for the demo
-- Weather data source (API) for the dashboard
+- Exact site coordinates for `WEATHER_LAT` / `WEATHER_LON`
