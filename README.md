@@ -41,7 +41,7 @@ flowchart LR
 |---|---|---|
 | 1 | Config + tag map + แปลง address ของ Delta | เสร็จ |
 | 2 | PLC จำลอง (Mock) | เสร็จ (datastore, TCP server, จำลองการทำงานหุ่น) |
-| 3 | Client อ่านค่า (read-only) | ยังไม่เริ่ม |
+| 3 | Client อ่านค่า (read-only) | เสร็จ |
 | 4 | Polling + logging | ยังไม่เริ่ม |
 | 5 | คำสั่ง Start/Stop/Mode | ยังไม่เริ่ม |
 | 6 | แบตเตอรี่ / การชาร์จ | ยังไม่เริ่ม |
@@ -131,6 +131,18 @@ docker compose --profile sim up --build
 .venv/bin/python -m app.sim
 ```
 
+### อ่านค่าจาก PLC (หรือ Mock)
+
+อ่านตามชื่อ tag อย่างเดียว ไม่เขียนอะไรลง PLC ใช้ค่า `PLC_HOST` / `PLC_PORT` จาก `.env`
+
+```bash
+.venv/bin/python -m app.read                          # ทุก tag ครั้งเดียว
+.venv/bin/python -m app.read robot_state battery_pct  # เฉพาะที่เลือก
+.venv/bin/python -m app.read --watch                  # อัปเดตทุก PLC_POLL_INTERVAL_S (Ctrl+C เพื่อออก)
+```
+
+ใช้กับ Mock บนเครื่องเดียวกัน: ตั้ง `PLC_HOST=127.0.0.1`, `PLC_PORT=5020`, `SIM_PORT=5020`
+
 ### การพัฒนา / ทดสอบ
 
 ต้องมี `python3-venv` ก่อน (`sudo apt install python3.12-venv`) ถ้ามีแค่ `python3-pip` ให้ใช้วิธีที่สอง
@@ -191,7 +203,7 @@ flowchart LR
 |---|---|---|
 | 1 | Config + tag map + Delta address conversion | Done |
 | 2 | Mock PLC | Done (datastore, TCP server, robot simulation) |
-| 3 | Read client (read-only) | Not started |
+| 3 | Read client (read-only) | Done |
 | 4 | Polling + logging | Not started |
 | 5 | Start/Stop/Mode commands | Not started |
 | 6 | Battery / charging | Not started |
@@ -280,6 +292,18 @@ docker compose --profile sim up --build
 # Directly on the machine (no Docker): set SIM_PORT=5020 in .env
 .venv/bin/python -m app.sim
 ```
+
+### Reading the PLC (or the mock)
+
+Read-only, by tag name. Uses `PLC_HOST` / `PLC_PORT` from `.env`.
+
+```bash
+.venv/bin/python -m app.read                          # all tags once
+.venv/bin/python -m app.read robot_state battery_pct  # selected tags
+.venv/bin/python -m app.read --watch                  # refresh every PLC_POLL_INTERVAL_S (Ctrl+C to quit)
+```
+
+Against the mock on the same machine: set `PLC_HOST=127.0.0.1`, `PLC_PORT=5020`, `SIM_PORT=5020`.
 
 ### Development / Tests
 
