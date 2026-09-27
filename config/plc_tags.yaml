@@ -1,0 +1,18 @@
+# PLC tag map: single source of truth for PLC device addresses.
+# Fill in ONLY from the ladder program. Do not guess addresses.
+# Code must never write to a device that is not listed here with dir: write/rw.
+#
+# Fields:
+#   device: Delta device name (e.g. M100, D200, X0). X/Y numbers are octal.
+#   dir:    read | write | rw
+#   type:   bool | int16 | uint16 | int32 | float32
+#   scale:  multiplier applied to raw value (optional, default 1)
+#   unit:   engineering unit (optional)
+#   desc:   meaning
+
+tags:
+  example_start_cmd:
+    device: M0        # PLACEHOLDER - replace from ladder
+    dir: write
+    type: bool
+    desc: "Placeholder - request cleaning start (momentary pulse)"
