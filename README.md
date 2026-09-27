@@ -42,7 +42,7 @@ flowchart LR
 | 1 | Config + tag map + แปลง address ของ Delta | เสร็จ |
 | 2 | PLC จำลอง (Mock) | เสร็จ (datastore, TCP server, จำลองการทำงานหุ่น) |
 | 3 | Client อ่านค่า (read-only) | เสร็จ |
-| 4 | Polling + logging | ยังไม่เริ่ม |
+| 4 | Polling + logging | เสร็จ (SQLite) |
 | 5 | คำสั่ง Start/Stop/Mode | ยังไม่เริ่ม |
 | 6 | แบตเตอรี่ / การชาร์จ | ยังไม่เริ่ม |
 | 7 | ตั้งเวลา | ยังไม่เริ่ม |
@@ -131,6 +131,31 @@ docker compose --profile sim up --build
 .venv/bin/python -m app.sim
 ```
 
+### Gateway service และประวัติ (SQLite)
+
+`python -m app` (หรือ service `gateway` ใน Docker) อ่าน PLC ทุก `PLC_POLL_INTERVAL_S` แล้วบันทึกลง `logs/gateway.db`:
+
+| ตาราง | เก็บอะไร | ใช้ทำอะไร |
+|---|---|---|
+| `latest` | 1 แถว ค่าล่าสุดทุก tag + online | แสดงค่าสด |
+| `snapshots` | ค่าทุก tag ทุก 10 วินาที เก็บ 30 วัน | กราฟย้อนหลัง |
+| `events` | state / alarm / E-stop / mode / online เปลี่ยน (ไม่ลบ) | ประวัติเหตุการณ์ |
+
+ค่า tag เก็บเป็น JSON (`{"robot_state": 3, "battery_pct": 90, ...}`) เวลา `ts` เป็น Unix time (วินาที)
+Dashboard อ่าน DB อย่างเดียว ไม่ต่อ PLC เอง ตัวอย่าง (pandas):
+
+```python
+import sqlite3, pandas as pd
+db = sqlite3.connect("logs/gateway.db")
+latest = pd.read_sql("SELECT ts, online, data FROM latest", db)
+battery = pd.read_sql(
+    "SELECT datetime(ts, 'unixepoch', 'localtime') AS time, "
+    "json_extract(data, '$.battery_pct') AS battery_pct, json_extract(data, '$.pzem_power') AS power_w "
+    "FROM snapshots WHERE ts > strftime('%s', 'now', '-1 day') ORDER BY ts", db)
+events = pd.read_sql("SELECT datetime(ts, 'unixepoch', 'localtime') AS time, kind, message "
+                     "FROM events ORDER BY id DESC LIMIT 50", db)
+```
+
 ### อ่านค่าจาก PLC (หรือ Mock)
 
 อ่านตามชื่อ tag อย่างเดียว ไม่เขียนอะไรลง PLC ใช้ค่า `PLC_HOST` / `PLC_PORT` จาก `.env`
@@ -204,7 +229,7 @@ flowchart LR
 | 1 | Config + tag map + Delta address conversion | Done |
 | 2 | Mock PLC | Done (datastore, TCP server, robot simulation) |
 | 3 | Read client (read-only) | Done |
-| 4 | Polling + logging | Not started |
+| 4 | Polling + logging | Done (SQLite) |
 | 5 | Start/Stop/Mode commands | Not started |
 | 6 | Battery / charging | Not started |
 | 7 | Schedule | Not started |
@@ -291,6 +316,31 @@ docker compose --profile sim up --build
 
 # Directly on the machine (no Docker): set SIM_PORT=5020 in .env
 .venv/bin/python -m app.sim
+```
+
+### Gateway service and history (SQLite)
+
+`python -m app` (or the `gateway` Docker service) reads the PLC every `PLC_POLL_INTERVAL_S` and records to `logs/gateway.db`:
+
+| Table | Holds | Use |
+|---|---|---|
+| `latest` | one row: newest values of all tags + online | live view |
+| `snapshots` | all tag values every 10 s, kept 30 days | history charts |
+| `events` | state / alarm / E-stop / mode / online changes (kept) | event log |
+
+Tag values are a JSON object (`{"robot_state": 3, "battery_pct": 90, ...}`); `ts` is Unix time in seconds.
+The dashboard only reads the DB and never talks to the PLC. Example (pandas):
+
+```python
+import sqlite3, pandas as pd
+db = sqlite3.connect("logs/gateway.db")
+latest = pd.read_sql("SELECT ts, online, data FROM latest", db)
+battery = pd.read_sql(
+    "SELECT datetime(ts, 'unixepoch', 'localtime') AS time, "
+    "json_extract(data, '$.battery_pct') AS battery_pct, json_extract(data, '$.pzem_power') AS power_w "
+    "FROM snapshots WHERE ts > strftime('%s', 'now', '-1 day') ORDER BY ts", db)
+events = pd.read_sql("SELECT datetime(ts, 'unixepoch', 'localtime') AS time, kind, message "
+                     "FROM events ORDER BY id DESC LIMIT 50", db)
 ```
 
 ### Reading the PLC (or the mock)

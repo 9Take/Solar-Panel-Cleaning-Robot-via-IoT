@@ -27,6 +27,8 @@ from app.delta import Area
 from app.tags import Tag, TagMap
 
 log = logging.getLogger(__name__)
+# pymodbus repeats our connection messages ("Failed to connect", "Repeating...").
+logging.getLogger("pymodbus").setLevel(logging.ERROR)
 
 # Per-request limits. Delta DVP documents up to 100 words (FC03); bits kept at 256.
 MAX_WORDS_PER_READ = 100
@@ -121,7 +123,7 @@ class PlcClient:
         if now < self._next_attempt:
             return False
         if await self._client.connect():
-            log.info("PLC online at %s:%d", self.host, self.port)
+            log.debug("Connected to PLC %s:%d", self.host, self.port)
             self._backoff = self._backoff_initial
             return True
         self._next_attempt = now + self._backoff
@@ -138,7 +140,7 @@ class PlcClient:
     async def read_many(self, names: Iterable[str]) -> dict[str, Value]:
         tags = [self.tags[name] for name in dict.fromkeys(names)]  # KeyError for unknown names
         if not await self.connect():
-            raise PlcOfflineError(f"PLC {self.host}:{self.port} offline")
+            raise PlcOfflineError(f"cannot connect to {self.host}:{self.port}")
         values: dict[str, Value] = {}
         for block in plan_reads(tags):
             values.update(await self._read_block(block))
@@ -154,7 +156,7 @@ class PlcClient:
             response = await request(block.address, count=block.count, device_id=self.unit_id)
         except (ModbusException, OSError, asyncio.TimeoutError) as exc:
             self._drop_connection(exc)
-            raise PlcOfflineError(f"PLC {self.host}:{self.port} connection lost: {exc}") from exc
+            raise PlcOfflineError(f"connection to {self.host}:{self.port} lost: {exc}") from exc
         if response.isError():
             raise PlcReadError(
                 f"PLC rejected read of {', '.join(t.name for t in block.tags)} "

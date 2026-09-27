@@ -47,7 +47,7 @@ async def main() -> None:
                 print(f"PLC {settings.plc_host}:{settings.plc_port}")
                 print(format_values(values, tags), flush=True)
             except (PlcOfflineError, PlcReadError) as exc:
-                print(f"!! {exc}", flush=True)
+                print(f"!! PLC offline or read failed: {exc}", flush=True)
             if not args.watch:
                 break
             await asyncio.sleep(settings.plc_poll_interval_s)
