@@ -37,6 +37,8 @@ flowchart LR
 
 ### ความคืบหน้า
 
+คู่มือแต่ละขั้น (ทำงานยังไง, วิธีใช้, วิธีเทส): [`docs/process/`](docs/process/README.md)
+
 | ขั้น | งาน | สถานะ |
 |---|---|---|
 | 1 | Config + tag map + แปลง address ของ Delta | เสร็จ |
@@ -267,6 +269,8 @@ flowchart LR
 - Cleaning schedule and history logging
 
 ### Progress
+
+Per-step guides (how it works, usage, testing; in Thai): [`docs/process/`](docs/process/README.md)
 
 | Step | Task | Status |
 |---|---|---|
