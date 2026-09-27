@@ -1,20 +1,25 @@
 """Entry point: `python -m app` — the gateway service.
 
-Polls the PLC, logs changes, records history in SQLite, and executes
-commands queued in the `commands` table (dashboard / CLI).
+Polls the PLC, logs changes, records history in SQLite, executes commands
+queued in the `commands` table (dashboard / CLI), and feeds the PLC the battery %
+from Tuya Cloud plus the Pi heartbeat (only when the TUYA_* settings are filled in),
+and starts timed cleaning runs from the `schedules` table (python -m app.schedule).
 Runs until SIGINT/SIGTERM (`docker compose down`).
 """
 
 import asyncio
 import logging
 import signal
+from zoneinfo import ZoneInfo
 
+from app.battery import BatteryFeeder, tuya_battery_source
 from app.command_queue import CommandQueueWorker
 from app.commander import PlcCommander
 from app.config import Settings
 from app.history import HistoryStore
 from app.plc_client import PlcClient
 from app.poller import Poller
+from app.schedule import Scheduler
 from app.tags import load_tags
 
 
@@ -32,8 +37,23 @@ async def main() -> None:
     plc = PlcClient.from_settings(settings, tags)
     poller = Poller(plc, store, settings.plc_poll_interval_s,
                     settings.snapshot_interval_s, settings.history_retention_days)
-    worker = CommandQueueWorker(store, PlcCommander(plc))
-    tasks = [asyncio.create_task(poller.run_forever()), asyncio.create_task(worker.run_forever())]
+    commander = PlcCommander(plc)
+    worker = CommandQueueWorker(store, commander)
+    scheduler = Scheduler(store, commander, ZoneInfo(settings.schedule_tz))
+    tasks = [asyncio.create_task(poller.run_forever()), asyncio.create_task(worker.run_forever()),
+             asyncio.create_task(scheduler.run_forever())]
+
+    missing = settings.missing_tuya_keys()
+    if missing:
+        log.warning("Battery feed disabled (%s empty): the PLC gets no battery_pct / pi_heartbeat "
+                    "from this gateway", ", ".join(missing))
+    else:
+        feeder = BatteryFeeder(plc, tuya_battery_source(settings), store,
+                               settings.pi_heartbeat_interval_s, settings.tuya_poll_interval_s,
+                               settings.battery_max_age_s)
+        tasks.append(asyncio.create_task(feeder.run_forever()))
+        log.info("Battery feed on: Tuya DP %r every %.0fs, heartbeat every %.1fs",
+                 settings.tuya_battery_dp, settings.tuya_poll_interval_s, settings.pi_heartbeat_interval_s)
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

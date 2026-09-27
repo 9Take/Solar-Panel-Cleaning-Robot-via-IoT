@@ -2,7 +2,9 @@
 
 from pathlib import Path
 
-from pydantic import Field, SecretStr
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,11 +25,25 @@ class Settings(BaseSettings):
     sim_behavior: bool = True             # run simulated ladder + plant (needs the full tag map)
     sim_tick_s: float = Field(0.2, gt=0)  # simulation step
     sim_travel_s: float = Field(20.0, gt=0)  # simulated end-to-end travel time
-    sim_fake_pi_battery: bool = True      # mock writes battery_pct + pi_heartbeat itself (until step 6)
+    sim_fake_pi_battery: bool = True      # mock writes battery_pct + pi_heartbeat itself (no Tuya)
+
+    # Tuya Cloud (battery % from the MPPT controller). Empty = battery feed disabled.
+    tuya_access_id: str = ""
+    tuya_access_secret: SecretStr = SecretStr("")
+    tuya_api_endpoint: str = ""
+    tuya_device_id: str = ""
+    tuya_battery_dp: str = ""             # DP code of battery %, see `python -m app.tuya`
+    tuya_battery_scale: float = Field(1.0, gt=0)   # battery % = DP value * scale
+    tuya_timeout_s: float = Field(10.0, gt=0)
+    tuya_poll_interval_s: float = Field(60.0, ge=10)
+    battery_max_age_s: float = Field(300.0, gt=0)  # older Tuya reading -> stop the heartbeat
+    pi_heartbeat_interval_s: float = Field(2.0, gt=0)
 
     # SecretStr hides the value in repr/logs; call .get_secret_value() only where needed.
     api_key: SecretStr | None = None
     api_secret: SecretStr | None = None
+
+    schedule_tz: str = "Asia/Bangkok"     # time zone of the schedule times (container runs in UTC)
 
     history_db: Path = Path("logs/gateway.db")
     snapshot_interval_s: float = Field(10.0, gt=0)
@@ -35,3 +51,23 @@ class Settings(BaseSettings):
 
     log_dir: Path = Path("logs")
     log_level: str = "INFO"
+
+    @field_validator("schedule_tz")
+    @classmethod
+    def _known_tz(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError(f"unknown time zone {value!r}, e.g. Asia/Bangkok") from None
+        return value
+
+    def missing_tuya_keys(self) -> list[str]:
+        """Tuya settings still empty (all needed for the battery feed)."""
+        values = {
+            "TUYA_ACCESS_ID": self.tuya_access_id,
+            "TUYA_ACCESS_SECRET": self.tuya_access_secret.get_secret_value(),
+            "TUYA_API_ENDPOINT": self.tuya_api_endpoint,
+            "TUYA_DEVICE_ID": self.tuya_device_id,
+            "TUYA_BATTERY_DP": self.tuya_battery_dp,
+        }
+        return [key for key, value in values.items() if not value.strip()]
