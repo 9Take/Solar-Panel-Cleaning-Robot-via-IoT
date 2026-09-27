@@ -122,6 +122,8 @@ Modbus TCP server ที่ทำตัวเหมือน DVP-12SE11T มี�
 
 มีการจำลองการทำงานของหุ่นตาม `docs/robot-operation.md`: ladder (state machine), การเดินระหว่าง limit 2 ฝั่ง, ปุ่ม, E-stop, ค่า PZEM และแบต (จำลองแทน Pi จนกว่าจะเชื่อม Tuya) ปรับได้ด้วย `SIM_*` ใน `.env`
 
+ทดสอบ step 6 (ส่งค่าแบต + heartbeat) ด้วยมือ ไม่ต้องมีบัญชี Tuya: `docker compose run --rm gateway python -m app.sim.battery_demo` — ใช้ Tuya ปลอมตาม timeline (ปกติ → Tuya ล่ม → กลับมา → ค่าผิด → แบตวิกฤต) ประมาณ 30 วินาที แล้วสรุป PASS/FAIL
+
 ```bash
 # ผ่าน Docker: ตั้ง PLC_HOST=plc-sim ใน .env ก่อน
 docker compose --profile sim up --build
@@ -334,6 +336,8 @@ docker compose down                    # stop
 A Modbus TCP server that behaves like the DVP-12SE11T. Only addresses in `config/plc_tags.yaml` exist; any other address returns exception 02, like the real PLC.
 
 It simulates the robot per `docs/robot-operation.md`: ladder state machine, travel between the two limit switches, buttons, E-stop, PZEM readings and battery (standing in for the Pi until Tuya is connected). Tune with the `SIM_*` settings in `.env`.
+
+Manual test of step 6 (battery feed + heartbeat), no Tuya account needed: `docker compose run --rm gateway python -m app.sim.battery_demo`. A fake Tuya follows a timeline (normal → Tuya down → back → invalid value → critical battery) for about 30 s, then prints PASS/FAIL per phase.
 
 ```bash
 # With Docker: set PLC_HOST=plc-sim in .env first
