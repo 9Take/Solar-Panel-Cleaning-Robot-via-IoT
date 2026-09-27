@@ -8,8 +8,8 @@ Data source (checked every refresh):
     never talks Modbus (see CLAUDE.md, step 4).
   * Otherwise a built-in simulation, with a sidebar to play the hardware.
 
-Weather is always simulated for now (source TBD). Solar power comes from Tuya
-in step 6, so it is simulated too.
+The schedule section edits the gateway's `schedules` table (app/schedule.py).
+Weather is always simulated for now (source TBD); solar power is not read yet.
 """
 import json
 import os
@@ -19,6 +19,7 @@ import time
 from datetime import datetime, timedelta
 from datetime import time as dtime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
@@ -31,6 +32,7 @@ st.markdown("<style>[data-testid='stMetricValue']{font-size:1.5rem}</style>",
 ROOT = Path(__file__).resolve().parent.parent
 TAGS_FILE = ROOT / os.environ.get("PLC_TAGS_FILE", "config/plc_tags.yaml")
 HISTORY_DB = ROOT / os.environ.get("HISTORY_DB", "logs/gateway.db")
+SCHEDULE_TZ = ZoneInfo(os.environ.get("SCHEDULE_TZ", "Asia/Bangkok"))
 
 # robot_state / alarm_code values, mirrored from app/robot.py
 IDLE, CLEANING, RETURNING, HOME, ALARM = range(5)
@@ -223,6 +225,118 @@ def modbus_address(device):
 
 
 # ============================================================
+# Schedule: gateway `schedules` table (app/schedule.py), mirrored here so the
+# dashboard does not need the gateway's Modbus dependencies
+# ============================================================
+SCHEDULE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS schedules (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    at         TEXT NOT NULL,
+    days       TEXT NOT NULL,
+    cycles     INTEGER,
+    enabled    INTEGER NOT NULL DEFAULT 1,
+    created_ts REAL NOT NULL,
+    last_run   TEXT
+);
+"""
+DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+DAYS_TH = ("จ", "อ", "พ", "พฤ", "ศ", "ส", "อา")
+CYCLES_MIN, CYCLES_MAX = 1, 100   # PlcCommander SETPOINTS["cycles"]
+SCHED_COLS = ["id", "เปิดใช้", "เวลา", "วัน", "จำนวนรอบ", "รันล่าสุด"]
+
+
+def days_to_thai(days):
+    days = tuple(days.split(","))
+    return "ทุกวัน" if days == DAYS else ",".join(DAYS_TH[DAYS.index(d)] for d in days)
+
+
+def parse_days(text):
+    """'ทุกวัน' / 'daily' / 'จ,พ,ศ' / 'mon,wed,fri' -> 'mon,wed,fri' (app.schedule format)."""
+    text = (text or "").strip().lower()
+    if text in ("", "ทุกวัน", "daily", "all", "*"):
+        return ",".join(DAYS)
+    picked = set()
+    for part in text.replace(" ", "").split(","):
+        if part in DAYS:
+            picked.add(part)
+        elif part in DAYS_TH:
+            picked.add(DAYS[DAYS_TH.index(part)])
+        elif part:
+            raise ValueError(f"ไม่รู้จักวัน '{part}' · ใช้ {','.join(DAYS_TH)} หรือ ทุกวัน")
+    return ",".join(d for d in DAYS if d in picked)
+
+
+def load_schedules(path):
+    db = sqlite3.connect(path, timeout=5)
+    try:
+        db.executescript(SCHEDULE_SCHEMA)
+        rows = db.execute("SELECT id, enabled, at, days, cycles, last_run FROM schedules "
+                          "ORDER BY at, id").fetchall()
+    finally:
+        db.close()
+    df = pd.DataFrame(
+        [(i, bool(en), datetime.strptime(at, "%H:%M").time(), days_to_thai(days), cyc, last)
+         for i, en, at, days, cyc, last in rows], columns=SCHED_COLS)
+    return df.astype({"id": "Int64", "จำนวนรอบ": "Int64"})
+
+
+def validate_schedules(df):
+    """Rows as (id, at, days, cycles, enabled); raises ValueError with a Thai message."""
+    rows = []
+    for n, r in enumerate(df.itertuples(index=False), start=1):
+        rid, enabled, at, days, cycles = r[0], r[1], r[2], r[3], r[4]
+        if at is None or pd.isna(at):
+            raise ValueError(f"แถว {n}: ยังไม่ได้ใส่เวลา")
+        cycles = None if cycles is None or pd.isna(cycles) else int(cycles)
+        if cycles is not None and not CYCLES_MIN <= cycles <= CYCLES_MAX:
+            raise ValueError(f"แถว {n}: จำนวนรอบต้องอยู่ระหว่าง {CYCLES_MIN}-{CYCLES_MAX}")
+        try:
+            days = parse_days(days)
+        except ValueError as exc:
+            raise ValueError(f"แถว {n}: {exc}") from None
+        rid = None if rid is None or pd.isna(rid) else int(rid)
+        rows.append((rid, at.strftime("%H:%M"), days, cycles, bool(enabled)))
+    return rows
+
+
+def save_schedules(path, rows):
+    """Apply the edited table: update kept rows, insert new ones, delete removed ones."""
+    db = sqlite3.connect(path, timeout=5)
+    try:
+        with db:
+            db.executescript(SCHEDULE_SCHEMA)
+            keep = [r[0] for r in rows if r[0] is not None]
+            db.execute(f"DELETE FROM schedules WHERE id NOT IN ({','.join('?' * len(keep))})", keep)
+            for rid, at, days, cycles, enabled in rows:
+                if rid is None:
+                    db.execute("INSERT INTO schedules (at, days, cycles, enabled, created_ts) "
+                               "VALUES (?, ?, ?, ?, ?)", (at, days, cycles, int(enabled), time.time()))
+                else:
+                    db.execute("UPDATE schedules SET at = ?, days = ?, cycles = ?, enabled = ? "
+                               "WHERE id = ?", (at, days, cycles, int(enabled), rid))
+    finally:
+        db.close()
+
+
+def next_run(rows):
+    """(datetime, cycles) of the next enabled run in SCHEDULE_TZ, or None."""
+    now = datetime.now(SCHEDULE_TZ)
+    best = None
+    for rid, at, days, cycles, enabled in rows:
+        if not enabled:
+            continue
+        hh, mm = map(int, at.split(":"))
+        for ahead in range(8):
+            day = now + timedelta(days=ahead)
+            when = day.replace(hour=hh, minute=mm, second=0, microsecond=0)
+            if DAYS[day.weekday()] in days.split(",") and when > now:
+                if best is None or when < best[0]:
+                    best = (when, cycles)
+                break
+    return best
+
+
+# ============================================================
 # Session defaults
 # ============================================================
 ss = st.session_state
@@ -230,10 +344,10 @@ if "robot" not in ss:
     ss.robot = new_robot()
     ss.sim_hist, ss.sim_log, ss.sim_events = [], [], {}
     ss.schedule = pd.DataFrame([
-        {"เปิดใช้": True,  "เวลา": dtime(8, 0),  "จำนวนรอบ": 2},
-        {"เปิดใช้": True,  "เวลา": dtime(12, 0), "จำนวนรอบ": 1},
-        {"เปิดใช้": False, "เวลา": dtime(16, 0), "จำนวนรอบ": 1},
-    ])
+        (None, True, dtime(8, 0), "ทุกวัน", 2, None),
+        (None, True, dtime(12, 0), "จ,อ,พ,พฤ,ศ", 1, None),
+        (None, False, dtime(16, 0), "ส,อา", None, None),
+    ], columns=SCHED_COLS).astype({"id": "Int64", "จำนวนรอบ": "Int64"})
 
 LIVE = HISTORY_DB.exists()
 
@@ -246,7 +360,7 @@ with st.sidebar:
     st.header("แหล่งข้อมูล")
     if LIVE:
         st.success(f"Gateway DB · `{HISTORY_DB.name}`")
-        st.caption("อ่านอย่างเดียวจาก SQLite ที่ gateway เขียน")
+        st.caption("อ่านสถานะจาก SQLite ที่ gateway เขียน · แก้ได้เฉพาะตารางเวลา")
         mode, estop = "AUTO", False
     else:
         st.info("ข้อมูลจำลอง (ไม่พบ gateway DB)")
@@ -263,9 +377,9 @@ with st.sidebar:
         if st.button("Reset alarm", width="stretch", disabled=estop):
             sim["reset"] = True
         if st.button("⏰ ถึงเวลาตามตาราง", width="stretch"):
-            on = ss.schedule[ss.schedule["เปิดใช้"] == True].dropna()  # noqa: E712
-            if len(on):
-                ss.robot["cycles_setpoint"] = int(on.iloc[0]["จำนวนรอบ"])
+            nxt = next_run(validate_schedules(ss.schedule))
+            if nxt and nxt[1]:
+                ss.robot["cycles_setpoint"] = nxt[1]
             sim["start"] = True
         st.caption("“ถึงเวลาตามตาราง” = Pi เขียน cycles_setpoint แล้วส่ง cmd_start")
 sim["mode"], sim["estop"] = mode, estop
@@ -463,39 +577,61 @@ live_section()
 
 
 # ============================================================
-# Auto mode: schedule + cycles (step 7 on the gateway)
+# Auto mode: schedule + cycles (run by the gateway, step 7)
 # ============================================================
 with st.container(border=True):
     st.subheader("🗓️ โหมดอัตโนมัติ · ตารางเวลาทำความสะอาด")
-    st.caption("ถึงเวลา Pi จะส่งคำสั่ง `cycles N` แล้ว `start` ผ่าน command queue "
-               f"· ทำงานเฉพาะเมื่อสวิตช์ X3 อยู่ที่ AUTO และแบต ≥ {BATT_START_MIN} %")
+    st.caption("ถึงเวลา gateway จะตั้ง `cycles` แล้วสั่ง `start` · ทำงานเมื่อสวิตช์ X3 อยู่ที่ AUTO, "
+               f"หุ่นอยู่ที่ Home และแบต ≥ {BATT_START_MIN} % · ไม่พร้อมจะข้ามรอบนั้นและบันทึกในเหตุการณ์")
     if not LIVE and mode == "MANUAL":
         st.warning("สวิตช์หน้าเครื่องอยู่ที่ MANUAL · ตารางเวลาจะไม่ทำงาน")
 
+    try:
+        table = load_schedules(HISTORY_DB) if LIVE else ss.schedule
+    except sqlite3.Error as exc:
+        st.error(f"อ่านตารางเวลาจาก gateway DB ไม่ได้: {exc}")
+        st.stop()
+
     edited = st.data_editor(
-        ss.schedule,
+        table,
         num_rows="dynamic",
         hide_index=True,
         width="stretch",
+        column_order=["เปิดใช้", "เวลา", "วัน", "จำนวนรอบ", "รันล่าสุด"],
         column_config={
             "เปิดใช้": st.column_config.CheckboxColumn(default=True),
             "เวลา": st.column_config.TimeColumn(format="HH:mm", step=300, required=True),
-            "จำนวนรอบ": st.column_config.NumberColumn(min_value=1, max_value=100, step=1,
-                                                        default=1, required=True),
+            "วัน": st.column_config.TextColumn(
+                default="ทุกวัน", help="ทุกวัน หรือเลือกวัน เช่น จ,พ,ศ (จ อ พ พฤ ศ ส อา)"),
+            "จำนวนรอบ": st.column_config.NumberColumn(
+                min_value=CYCLES_MIN, max_value=CYCLES_MAX, step=1,
+                help="เว้นว่าง = ใช้ค่า cycles_setpoint ที่ตั้งใน PLC"),
+            "รันล่าสุด": st.column_config.TextColumn(disabled=True, help="วันที่รันหรือข้ามล่าสุด"),
         },
         key="schedule_editor",
     )
 
-    active = edited[edited["เปิดใช้"] == True].dropna().sort_values("เวลา")  # noqa: E712
-    now = datetime.now().time()
-    upcoming = active[active["เวลา"] > now]
-    nxt = upcoming.iloc[0] if len(upcoming) else (active.iloc[0] if len(active) else None)
+    try:
+        rows = validate_schedules(edited)
+    except ValueError as exc:
+        rows = None
+        st.error(str(exc))
 
-    c = st.columns(3)
-    c[0].metric("รอบถัดไป", nxt["เวลา"].strftime("%H:%M") if nxt is not None else "—")
-    c[1].metric("จำนวนรอบครั้งถัดไป", int(nxt["จำนวนรอบ"]) if nxt is not None else "—")
-    c[2].metric("รวมต่อวัน", f"{int(active['จำนวนรอบ'].sum())} รอบ")
+    if rows is not None:
+        nxt = next_run(rows)
+        c = st.columns(3)
+        c[0].metric("รอบถัดไป", f"{DAYS_TH[nxt[0].weekday()]} {nxt[0]:%H:%M}" if nxt else "—")
+        c[1].metric("จำนวนรอบครั้งถัดไป",
+                    ("ตาม PLC" if nxt[1] is None else str(nxt[1])) if nxt else "—")
+        c[2].metric("ตารางที่เปิดใช้", f"{sum(1 for r in rows if r[4])} รายการ")
 
-    if st.button("💾 บันทึกตารางเวลา", type="primary"):
-        ss.schedule = edited
-        st.success("บันทึกแล้ว (จำลอง) · การรันตามตารางจริงเป็นงาน step 7 ของ gateway")
+    if st.button("💾 บันทึกตารางเวลา", type="primary", disabled=rows is None):
+        if LIVE:
+            try:
+                save_schedules(HISTORY_DB, rows)
+                st.success("บันทึกแล้ว · gateway ใช้ตารางใหม่ภายใน 5 วินาที")
+            except sqlite3.Error as exc:
+                st.error(f"บันทึกไม่ได้: {exc}")
+        else:
+            ss.schedule = edited
+            st.success("บันทึกแล้ว (จำลอง)")

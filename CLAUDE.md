@@ -28,7 +28,7 @@ Keep the progress tables in `README.md` (Thai + English sections) in sync with t
 - [x] **5. Commands** — `app/commander.py` `PlcCommander` (10 safety rules in its docstring: whitelist, pulse + 2 s ack else Pi clears the bit, Stop never blocked and wins over Start, pre-checks explain refusals, lock + debounce, no retries, cycles 1-100). Writes only via `PlcClient._write` (read-only public API). Dashboard/CLI send via SQLite `commands` queue (`app/command_queue.py`, 5 s expiry, stop first, audited in `events`). CLI: `python -m app.cmd start|stop|return|reset|cycles N`
 - [x] **6. Battery (Tuya) + heartbeat** — `app/tuya.py` (stdlib Tuya Cloud client, HMAC-SHA256 signing verified against Tuya doc examples; `python -m app.tuya` lists DPs), `app/battery.py` `BatteryFeeder`: Tuya poll task (`TUYA_POLL_INTERVAL_S`) + feed task writing `battery_pct` then `pi_heartbeat+1` every `PI_HEARTBEAT_INTERVAL_S`. `battery_to_feed`: no/stale (> `BATTERY_MAX_AGE_S`)/invalid reading → None → heartbeat held (ladder alarm 5); valid → `int()` (round down). Feed off if any TUYA_* key empty. PZEM values already read by the poller
 - [x] **7. Schedule** — `app/schedule.py`: `schedules` table in `logs/gateway.db` (HH:MM, days, optional cycles, enabled, last_run), `Scheduler` checks every 5 s in `SCHEDULE_TZ` (tzdata in image). Due → Auto mode check, then `cycles` + `start` directly via `PlcCommander` (not the queue: the queue runs jobs concurrently and the commander lock would reject the second). Once per day, no retries; missed > 60 s → `missed` event; not ready → `skipped` event with the commander's reason. CLI: `python -m app.schedule list|add|remove|enable|disable`
-- [ ] **8. UI / API** — Streamlit dashboard mockup `dashboard/app.py` (in progress): reads `HISTORY_DB` read-only, falls back to built-in simulation when the DB is missing. See **Dashboard**
+- [ ] **8. UI / API** — Streamlit dashboard mockup `dashboard/app.py` (in progress): reads `HISTORY_DB` (status read-only; edits only the `schedules` table), falls back to built-in simulation when the DB is missing. See **Dashboard**
 
 ## Hardware
 
@@ -133,7 +133,7 @@ Single source of truth: `config/plc_tags.yaml`. Code refers to tags by name, nev
 
 ## Dashboard
 
-`streamlit run dashboard/app.py` from the repo root. Reads `latest` / `snapshots` / `events` from `HISTORY_DB` (read-only); without the DB it runs its own simulation with a sidebar for the hardware (mode switch, E-stop, Start/Stop, Reset, schedule trigger). Weather and solar power (Tuya, step 6) are simulated for now.
+`streamlit run dashboard/app.py` from the repo root. Reads `latest` / `snapshots` / `events` from `HISTORY_DB` (read-only) and edits the step 7 `schedules` table (its schema and validation are mirrored in `dashboard/app.py` so the dashboard needs no Modbus dependencies — keep them in sync with `app/schedule.py`); without the DB it runs its own simulation with a sidebar for the hardware (mode switch, E-stop, Start/Stop, Reset, schedule trigger). Weather is simulated for now; solar power is not read by the gateway yet (step 6 reads battery % only).
 
 Layout decided by the owner (top to bottom):
 
@@ -142,7 +142,7 @@ Layout decided by the owner (top to bottom):
 3. **Position** — only three points: end 1 (X0), between panels, end 2 (X1). Whichever end the robot rests at is Home. No percentage track.
 4. **Emergency** — full-width red banner when `estop_ok` = 0. Also banners for PLC offline and a stale `latest` row (gateway down).
 5. **Battery** (Tuya %, PZEM V/A/W/Wh, solar W, thresholds 80 / 25 / 20 %), **events** and **PLC Tag Monitor**.
-6. **Auto mode schedule** — list of times, each with a number of cycles (1–100). Running it is step 7 on the gateway (`cycles N` then `start` via the command queue).
+6. **Auto mode schedule** — rows of time, days (Thai `จ,พ,ศ` or `ทุกวัน`, stored as `mon,wed,fri`), cycles 1–100 (empty = PLC's `cycles_setpoint`), enabled, last run. The gateway `Scheduler` runs them (step 7).
 
 - No user accounts / login for now — focus on the system.
 - **No control buttons on the dashboard.** Start/Stop and mode selection are done on the hardware; the dashboard only reads.
