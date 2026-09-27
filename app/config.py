@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     # Mock PLC (app.sim) bind address. Ports < 1024 need root outside Docker.
     sim_host: str = "0.0.0.0"
     sim_port: int = Field(502, ge=0, le=65535)
+    sim_behavior: bool = True             # run simulated ladder + plant (needs the full tag map)
+    sim_tick_s: float = Field(0.2, gt=0)  # simulation step
+    sim_travel_s: float = Field(20.0, gt=0)  # simulated end-to-end travel time
+    sim_fake_pi_battery: bool = True      # mock writes battery_pct + pi_heartbeat itself (until step 6)
 
     # SecretStr hides the value in repr/logs; call .get_secret_value() only where needed.
     api_key: SecretStr | None = None

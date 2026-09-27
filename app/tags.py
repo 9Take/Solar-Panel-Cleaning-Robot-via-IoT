@@ -20,10 +20,14 @@ class TagType(str, Enum):
     INT16 = "int16"
     UINT16 = "uint16"
     INT32 = "int32"
+    UINT32 = "uint32"
     FLOAT32 = "float32"
 
 
-_WORD_COUNT = {TagType.INT16: 1, TagType.UINT16: 1, TagType.INT32: 2, TagType.FLOAT32: 2}
+_WORD_COUNT = {
+    TagType.INT16: 1, TagType.UINT16: 1,
+    TagType.INT32: 2, TagType.UINT32: 2, TagType.FLOAT32: 2,
+}
 
 
 class Tag(BaseModel):

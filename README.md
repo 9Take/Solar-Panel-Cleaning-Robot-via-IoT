@@ -40,7 +40,7 @@ flowchart LR
 | ขั้น | งาน | สถานะ |
 |---|---|---|
 | 1 | Config + tag map + แปลง address ของ Delta | เสร็จ |
-| 2 | PLC จำลอง (Mock) | 2a–2b เสร็จ (datastore, TCP server), 2c กำลังทำ |
+| 2 | PLC จำลอง (Mock) | เสร็จ (datastore, TCP server, จำลองการทำงานหุ่น) |
 | 3 | Client อ่านค่า (read-only) | ยังไม่เริ่ม |
 | 4 | Polling + logging | ยังไม่เริ่ม |
 | 5 | คำสั่ง Start/Stop/Mode | ยังไม่เริ่ม |
@@ -120,6 +120,8 @@ docker compose down                    # หยุด
 
 Modbus TCP server ที่ทำตัวเหมือน DVP-12SE11T มีเฉพาะ address ใน `config/plc_tags.yaml` ถ้าอ่าน address อื่นจะได้ exception 02 เหมือน PLC จริง
 
+มีการจำลองการทำงานของหุ่นตาม `docs/robot-operation.md`: ladder (state machine), การเดินระหว่าง limit 2 ฝั่ง, ปุ่ม, E-stop, ค่า PZEM และแบต (จำลองแทน Pi จนกว่าจะเชื่อม Tuya) ปรับได้ด้วย `SIM_*` ใน `.env`
+
 ```bash
 # ผ่าน Docker: ตั้ง PLC_HOST=plc-sim ใน .env ก่อน
 docker compose --profile sim up --build
@@ -188,7 +190,7 @@ flowchart LR
 | Step | Task | Status |
 |---|---|---|
 | 1 | Config + tag map + Delta address conversion | Done |
-| 2 | Mock PLC | 2a–2b done (datastore, TCP server), 2c in progress |
+| 2 | Mock PLC | Done (datastore, TCP server, robot simulation) |
 | 3 | Read client (read-only) | Not started |
 | 4 | Polling + logging | Not started |
 | 5 | Start/Stop/Mode commands | Not started |
@@ -267,6 +269,8 @@ docker compose down                    # stop
 ### Mock PLC
 
 A Modbus TCP server that behaves like the DVP-12SE11T. Only addresses in `config/plc_tags.yaml` exist; any other address returns exception 02, like the real PLC.
+
+It simulates the robot per `docs/robot-operation.md`: ladder state machine, travel between the two limit switches, buttons, E-stop, PZEM readings and battery (standing in for the Pi until Tuya is connected). Tune with the `SIM_*` settings in `.env`.
 
 ```bash
 # With Docker: set PLC_HOST=plc-sim in .env first
