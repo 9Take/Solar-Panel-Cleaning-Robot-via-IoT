@@ -40,10 +40,10 @@ flowchart LR
 | ขั้น | งาน | สถานะ |
 |---|---|---|
 | 1 | Config + tag map + แปลง address ของ Delta | เสร็จ |
-| 2 | PLC จำลอง (Mock) | 2a–2b เสร็จ (datastore, TCP server), 2c กำลังทำ |
-| 3 | Client อ่านค่า (read-only) | ยังไม่เริ่ม |
-| 4 | Polling + logging | ยังไม่เริ่ม |
-| 5 | คำสั่ง Start/Stop/Mode | ยังไม่เริ่ม |
+| 2 | PLC จำลอง (Mock) | เสร็จ (datastore, TCP server, จำลองการทำงานหุ่น) |
+| 3 | Client อ่านค่า (read-only) | เสร็จ |
+| 4 | Polling + logging | เสร็จ (SQLite) |
+| 5 | คำสั่ง Start/Stop/Return/Reset | เสร็จ |
 | 6 | แบตเตอรี่ / การชาร์จ | ยังไม่เริ่ม |
 | 7 | ตั้งเวลา | ยังไม่เริ่ม |
 | 8 | UI / API | ยังไม่เริ่ม |
@@ -120,6 +120,8 @@ docker compose down                    # หยุด
 
 Modbus TCP server ที่ทำตัวเหมือน DVP-12SE11T มีเฉพาะ address ใน `config/plc_tags.yaml` ถ้าอ่าน address อื่นจะได้ exception 02 เหมือน PLC จริง
 
+มีการจำลองการทำงานของหุ่นตาม `docs/robot-operation.md`: ladder (state machine), การเดินระหว่าง limit 2 ฝั่ง, ปุ่ม, E-stop, ค่า PZEM และแบต (จำลองแทน Pi จนกว่าจะเชื่อม Tuya) ปรับได้ด้วย `SIM_*` ใน `.env`
+
 ```bash
 # ผ่าน Docker: ตั้ง PLC_HOST=plc-sim ใน .env ก่อน
 docker compose --profile sim up --build
@@ -128,6 +130,69 @@ docker compose --profile sim up --build
 # รันตรงบนเครื่อง (ไม่ใช้ Docker): ตั้ง SIM_PORT=5020 ใน .env
 .venv/bin/python -m app.sim
 ```
+
+### Gateway service และประวัติ (SQLite)
+
+`python -m app` (หรือ service `gateway` ใน Docker) อ่าน PLC ทุก `PLC_POLL_INTERVAL_S` แล้วบันทึกลง `logs/gateway.db`:
+
+| ตาราง | เก็บอะไร | ใช้ทำอะไร |
+|---|---|---|
+| `latest` | 1 แถว ค่าล่าสุดทุก tag + online | แสดงค่าสด |
+| `snapshots` | ค่าทุก tag ทุก 10 วินาที เก็บ 30 วัน | กราฟย้อนหลัง |
+| `events` | state / alarm / E-stop / mode / online เปลี่ยน (ไม่ลบ) | ประวัติเหตุการณ์ |
+
+ค่า tag เก็บเป็น JSON (`{"robot_state": 3, "battery_pct": 90, ...}`) เวลา `ts` เป็น Unix time (วินาที)
+Dashboard อ่าน DB อย่างเดียว ไม่ต่อ PLC เอง ตัวอย่าง (pandas):
+
+```python
+import sqlite3, pandas as pd
+db = sqlite3.connect("logs/gateway.db")
+latest = pd.read_sql("SELECT ts, online, data FROM latest", db)
+battery = pd.read_sql(
+    "SELECT datetime(ts, 'unixepoch', 'localtime') AS time, "
+    "json_extract(data, '$.battery_pct') AS battery_pct, json_extract(data, '$.pzem_power') AS power_w "
+    "FROM snapshots WHERE ts > strftime('%s', 'now', '-1 day') ORDER BY ts", db)
+events = pd.read_sql("SELECT datetime(ts, 'unixepoch', 'localtime') AS time, kind, message "
+                     "FROM events ORDER BY id DESC LIMIT 50", db)
+```
+
+### สั่งงานหุ่น (Start / Stop / Return / Reset)
+
+คำสั่งทุกทางผ่าน**คิวในตาราง `commands`** แล้ว gateway เป็นคนส่งเข้า PLC ตามกฎความปลอดภัย (ดู `app/commander.py`) — ต้องมี `python -m app` รันอยู่
+
+```bash
+.venv/bin/python -m app.cmd start       # เริ่มทำความสะอาด
+.venv/bin/python -m app.cmd stop        # หยุดอยู่กับที่ (ไม่มีวันถูกบล็อก)
+.venv/bin/python -m app.cmd return      # กลับจุดพักที่ใกล้ที่สุด
+.venv/bin/python -m app.cmd reset       # ล้าง alarm (ต้องปลด E-stop ก่อน)
+.venv/bin/python -m app.cmd cycles 3    # จำนวนรอบโหมด Auto (1–100)
+```
+
+จาก dashboard (Python):
+
+```python
+import sqlite3, time
+db = sqlite3.connect("logs/gateway.db")
+cid = db.execute("INSERT INTO commands (ts, command, source) VALUES (?, 'start', 'dashboard')",
+                 (time.time(),)).lastrowid
+db.commit()
+# แล้วอ่านผล: SELECT status, result FROM commands WHERE id = ?
+#   status: pending → running → done | rejected | ignored | not_acknowledged | not_started | error | expired
+```
+
+คำสั่งที่รอเกิน 5 วินาทีโดยไม่มี gateway รับ จะหมดอายุและไม่ถูกส่ง
+
+### อ่านค่าจาก PLC (หรือ Mock)
+
+อ่านตามชื่อ tag อย่างเดียว ไม่เขียนอะไรลง PLC ใช้ค่า `PLC_HOST` / `PLC_PORT` จาก `.env`
+
+```bash
+.venv/bin/python -m app.read                          # ทุก tag ครั้งเดียว
+.venv/bin/python -m app.read robot_state battery_pct  # เฉพาะที่เลือก
+.venv/bin/python -m app.read --watch                  # อัปเดตทุก PLC_POLL_INTERVAL_S (Ctrl+C เพื่อออก)
+```
+
+ใช้กับ Mock บนเครื่องเดียวกัน: ตั้ง `PLC_HOST=127.0.0.1`, `PLC_PORT=5020`, `SIM_PORT=5020`
 
 ### การพัฒนา / ทดสอบ
 
@@ -188,10 +253,10 @@ flowchart LR
 | Step | Task | Status |
 |---|---|---|
 | 1 | Config + tag map + Delta address conversion | Done |
-| 2 | Mock PLC | 2a–2b done (datastore, TCP server), 2c in progress |
-| 3 | Read client (read-only) | Not started |
-| 4 | Polling + logging | Not started |
-| 5 | Start/Stop/Mode commands | Not started |
+| 2 | Mock PLC | Done (datastore, TCP server, robot simulation) |
+| 3 | Read client (read-only) | Done |
+| 4 | Polling + logging | Done (SQLite) |
+| 5 | Start/Stop/Return/Reset commands | Done |
 | 6 | Battery / charging | Not started |
 | 7 | Schedule | Not started |
 | 8 | UI / API | Not started |
@@ -268,6 +333,8 @@ docker compose down                    # stop
 
 A Modbus TCP server that behaves like the DVP-12SE11T. Only addresses in `config/plc_tags.yaml` exist; any other address returns exception 02, like the real PLC.
 
+It simulates the robot per `docs/robot-operation.md`: ladder state machine, travel between the two limit switches, buttons, E-stop, PZEM readings and battery (standing in for the Pi until Tuya is connected). Tune with the `SIM_*` settings in `.env`.
+
 ```bash
 # With Docker: set PLC_HOST=plc-sim in .env first
 docker compose --profile sim up --build
@@ -276,6 +343,69 @@ docker compose --profile sim up --build
 # Directly on the machine (no Docker): set SIM_PORT=5020 in .env
 .venv/bin/python -m app.sim
 ```
+
+### Gateway service and history (SQLite)
+
+`python -m app` (or the `gateway` Docker service) reads the PLC every `PLC_POLL_INTERVAL_S` and records to `logs/gateway.db`:
+
+| Table | Holds | Use |
+|---|---|---|
+| `latest` | one row: newest values of all tags + online | live view |
+| `snapshots` | all tag values every 10 s, kept 30 days | history charts |
+| `events` | state / alarm / E-stop / mode / online changes (kept) | event log |
+
+Tag values are a JSON object (`{"robot_state": 3, "battery_pct": 90, ...}`); `ts` is Unix time in seconds.
+The dashboard only reads the DB and never talks to the PLC. Example (pandas):
+
+```python
+import sqlite3, pandas as pd
+db = sqlite3.connect("logs/gateway.db")
+latest = pd.read_sql("SELECT ts, online, data FROM latest", db)
+battery = pd.read_sql(
+    "SELECT datetime(ts, 'unixepoch', 'localtime') AS time, "
+    "json_extract(data, '$.battery_pct') AS battery_pct, json_extract(data, '$.pzem_power') AS power_w "
+    "FROM snapshots WHERE ts > strftime('%s', 'now', '-1 day') ORDER BY ts", db)
+events = pd.read_sql("SELECT datetime(ts, 'unixepoch', 'localtime') AS time, kind, message "
+                     "FROM events ORDER BY id DESC LIMIT 50", db)
+```
+
+### Commanding the robot (Start / Stop / Return / Reset)
+
+Every command goes through the **`commands` queue table**; the gateway sends it to the PLC under the safety rules (see `app/commander.py`). `python -m app` must be running.
+
+```bash
+.venv/bin/python -m app.cmd start       # start cleaning
+.venv/bin/python -m app.cmd stop        # stop where it is (never blocked)
+.venv/bin/python -m app.cmd return      # return to the nearest end
+.venv/bin/python -m app.cmd reset       # clear an alarm (release the E-stop first)
+.venv/bin/python -m app.cmd cycles 3    # cycles per Auto run (1-100)
+```
+
+From the dashboard (Python):
+
+```python
+import sqlite3, time
+db = sqlite3.connect("logs/gateway.db")
+cid = db.execute("INSERT INTO commands (ts, command, source) VALUES (?, 'start', 'dashboard')",
+                 (time.time(),)).lastrowid
+db.commit()
+# then poll: SELECT status, result FROM commands WHERE id = ?
+#   status: pending -> running -> done | rejected | ignored | not_acknowledged | not_started | error | expired
+```
+
+A command waiting more than 5 s without a gateway to pick it up expires and is never sent.
+
+### Reading the PLC (or the mock)
+
+Read-only, by tag name. Uses `PLC_HOST` / `PLC_PORT` from `.env`.
+
+```bash
+.venv/bin/python -m app.read                          # all tags once
+.venv/bin/python -m app.read robot_state battery_pct  # selected tags
+.venv/bin/python -m app.read --watch                  # refresh every PLC_POLL_INTERVAL_S (Ctrl+C to quit)
+```
+
+Against the mock on the same machine: set `PLC_HOST=127.0.0.1`, `PLC_PORT=5020`, `SIM_PORT=5020`.
 
 ### Development / Tests
 
