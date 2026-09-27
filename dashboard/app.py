@@ -1,19 +1,24 @@
 """Solar Panel Cleaning Robot - monitoring dashboard (mockup).
 
-Run:  streamlit run app.py
+Run from the repo root:  streamlit run dashboard/app.py
 
-Everything here is simulated. Two functions get replaced when the gateway is ready:
-  get_weather()  -> weather API
-  read_plc()     -> tag values from the IoT gateway (Modbus TCP to the PLC)
-                    + Tuya Cloud (battery %, solar)
+Data source (checked every refresh):
+  * Gateway history DB (HISTORY_DB, default logs/gateway.db) if it exists.
+    The gateway (`python -m app`) writes it; the dashboard only reads it and
+    never talks Modbus (see CLAUDE.md, step 4).
+  * Otherwise a built-in simulation, with a sidebar to play the hardware.
 
-Behavior follows docs/robot-operation.md in the gateway repo
-(branch feature/step2c-sim-behavior). Tag names come from config/plc_tags.yaml.
+Weather is always simulated for now (source TBD). Solar power comes from Tuya
+in step 6, so it is simulated too.
 """
+import json
 import os
 import random
+import sqlite3
+import time
 from datetime import datetime, timedelta
 from datetime import time as dtime
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -23,10 +28,11 @@ st.set_page_config(page_title="Solar Robot Dashboard", page_icon="☀️", layou
 st.markdown("<style>[data-testid='stMetricValue']{font-size:1.5rem}</style>",
             unsafe_allow_html=True)
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-TAGS_FILE = os.path.join(HERE, os.environ.get("PLC_TAGS_FILE", "config/plc_tags.yaml"))
+ROOT = Path(__file__).resolve().parent.parent
+TAGS_FILE = ROOT / os.environ.get("PLC_TAGS_FILE", "config/plc_tags.yaml")
+HISTORY_DB = ROOT / os.environ.get("HISTORY_DB", "logs/gateway.db")
 
-# robot_state (D10) and alarm_code (D11), per robot-operation.md §4 and §6
+# robot_state / alarm_code values, mirrored from app/robot.py
 IDLE, CLEANING, RETURNING, HOME, ALARM = range(5)
 ALARM_TEXT = {
     0: "ไม่มี",
@@ -36,59 +42,78 @@ ALARM_TEXT = {
     4: "Limit ทั้งสองฝั่ง ON พร้อมกัน",
     5: "Pi heartbeat หาย (ไม่รู้ค่าแบต)",
 }
-# Ladder thresholds (LadderParams in app/sim/ladder.py)
+# Ladder thresholds (docs/robot-operation.md §8)
 BATT_START_MIN, BATT_LOW, BATT_CRITICAL = 80, 25, 20
 TRAVEL_S, END_PAUSE_S = 20, 2
+STALE_S = 5  # latest row older than this -> gateway not running
 
 
 # ============================================================
-# Simulated data sources
+# Weather (simulated)
 # ============================================================
 def get_weather():
-    """Current weather + hourly forecast (simulated)."""
     now = datetime.now()
     rain = [5, 5, 10, 20, 45, 70, 60, 30]
     temp = [32, 33, 34, 34, 33, 30, 29, 28]
     hourly = [{"เวลา": (now + timedelta(hours=h)).strftime("%H:00"),
                "โอกาสฝน (%)": rain[h], "อุณหภูมิ (°C)": temp[h]} for h in range(8)]
+    return {"condition": "มีเมฆบางส่วน", "temp_c": 32.4, "humidity": 62, "wind_kmh": 12,
+            "rain_chance": 10, "irradiance": 780, "dust": 58, "hourly": hourly}
+
+
+# ============================================================
+# Source 1: gateway history DB (read-only)
+# ============================================================
+def read_gateway(path):
+    """Latest values, recent snapshots and events from app/history.py tables."""
+    db = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2)
+    try:
+        row = db.execute("SELECT ts, online, data FROM latest WHERE id = 1").fetchone()
+        since = time.time() - 1800
+        snaps = db.execute("SELECT ts, json_extract(data, '$.pzem_voltage'), "
+                           "json_extract(data, '$.battery_pct') FROM snapshots "
+                           "WHERE ts >= ? ORDER BY ts", (since,)).fetchall()
+        events = db.execute("SELECT ts, kind, message FROM events "
+                            "ORDER BY id DESC LIMIT 15").fetchall()
+    finally:
+        db.close()
+    if row is None:
+        return None
+    ts, online, data = row
     return {
-        "condition": "มีเมฆบางส่วน",
-        "temp_c": 32.4,
-        "humidity": 62,
-        "wind_kmh": 12,
-        "rain_chance": 10,
-        "irradiance": 780,  # W/m²
-        "dust": 58,         # PM10 µg/m³
-        "hourly": hourly,
+        "ts": ts,
+        "online": bool(online) and time.time() - ts < STALE_S,
+        "gateway_up": time.time() - ts < STALE_S,
+        "values": json.loads(data) if data else None,
+        "solar_w": None,  # Tuya, step 6
+        "history": [(t, v, b) for t, v, b in snaps],
+        "events": events,
     }
 
 
+# ============================================================
+# Source 2: simulation (no gateway)
+# ============================================================
 def new_robot():
-    return {
-        "state": CLEANING, "alarm": 0,
-        "pos": 0.3,              # 0 = end 1 (X0), 1 = end 2 (X1)
-        "dir_to_end2": True,
-        "start_at_end1": True,
-        "pause": 0.0,
-        "cycles": 0, "cycles_setpoint": 2,
-        "battery": 86.0, "energy_wh": 1520.0,
-    }
+    return {"state": CLEANING, "alarm": 0, "pos": 0.3, "dir_to_end2": True,
+            "start_at_end1": True, "pause": 0.0, "cycles": 0, "cycles_setpoint": 2,
+            "battery": 86.0, "energy_wh": 1520.0}
 
 
 def step_robot(r, sim, dt=1.0):
-    """One simulated ladder scan (simplified version of LadderSim.scan)."""
+    """One simulated ladder scan (simplified app/sim/ladder.py)."""
     at_end1, at_end2 = r["pos"] <= 0.0, r["pos"] >= 1.0
-    reset = sim.pop("reset", False)
+    reset, start, stop = (sim.pop(k, False) for k in ("reset", "start", "stop"))
 
-    # E-stop overrides everything (NC contact on X4: 0 = pressed)
     if sim["estop"]:
         r["state"], r["alarm"] = ALARM, 1
     elif r["state"] == ALARM and r["alarm"] == 1 and reset:
         r["state"] = HOME if (at_end1 or at_end2) else IDLE
         r["alarm"] = 0
 
-    # Front Start/Stop button (X2) or scheduled cmd_start from the Pi
-    if sim.pop("start", False) and r["state"] in (HOME, IDLE):
+    if stop and r["state"] in (CLEANING, RETURNING):   # Stop wins over Start
+        r["state"] = IDLE
+    elif start and r["state"] in (HOME, IDLE):
         if r["state"] == IDLE:
             r["state"] = RETURNING
             r["dir_to_end2"] = r["pos"] >= 0.5
@@ -96,8 +121,6 @@ def step_robot(r, sim, dt=1.0):
             r["state"], r["cycles"] = CLEANING, 0
             r["start_at_end1"] = at_end1
             r["dir_to_end2"] = at_end1
-    if sim.pop("stop", False) and r["state"] in (CLEANING, RETURNING):
-        r["state"] = IDLE
 
     moving = r["state"] in (CLEANING, RETURNING)
     if moving and r["pause"] > 0:
@@ -112,8 +135,7 @@ def step_robot(r, sim, dt=1.0):
             back_at_start = (r["pos"] <= 0.0) == r["start_at_end1"]
             if back_at_start:
                 r["cycles"] += 1
-            auto_done = sim["mode"] == "AUTO" and r["cycles"] >= r["cycles_setpoint"]
-            if back_at_start and auto_done:
+            if back_at_start and sim["mode"] == "AUTO" and r["cycles"] >= r["cycles_setpoint"]:
                 r["state"] = HOME
             else:
                 r["dir_to_end2"] = not r["dir_to_end2"]
@@ -122,51 +144,62 @@ def step_robot(r, sim, dt=1.0):
             r["state"] = RETURNING
             r["dir_to_end2"] = r["pos"] >= 0.5
 
-    # Battery: solar charges all the time, driving drains it (sped up for the demo)
     moving = r["state"] in (CLEANING, RETURNING) and r["pause"] <= 0
-    r["battery"] += (-0.15 if moving else 0) + 0.03
-    r["battery"] = min(100.0, max(0.0, r["battery"]))
+    r["battery"] = min(100.0, max(0.0, r["battery"] + (-0.15 if moving else 0) + 0.03))
     if r["state"] != ALARM:
         r["alarm"] = 2 if r["battery"] < BATT_CRITICAL else 0
 
 
-def read_plc(sim):
-    """Tag name -> engineering value, as the gateway would return it (simulated)."""
-    r = st.session_state.robot
+def read_simulation(sim):
+    """Same shape as read_gateway(), values keyed by tag name."""
+    ss = st.session_state
+    r = ss.robot
+    prev = (r["state"], r["alarm"], sim["estop"], sim["mode"])
     step_robot(r, sim)
     moving = r["state"] in (CLEANING, RETURNING) and r["pause"] <= 0
 
-    solar_w = 95 + random.uniform(-4, 4)                     # Tuya MPPT
-    volt = 42.0 + r["battery"] * 0.126                       # 48 V Li-ion (13S)
-    amp = abs(solar_w / volt - (3.6 if moving else 0.4))     # PZEM-017 has no sign
+    solar_w = 95 + random.uniform(-4, 4)
+    volt = 42.0 + r["battery"] * 0.126                      # 48 V Li-ion (13S)
+    amp = abs(solar_w / volt - (3.6 if moving else 0.4))    # PZEM-017 has no sign
     r["energy_wh"] += amp * volt / 3600
+    now = time.time()
 
-    return {
-        # PLC status (D registers)
-        "robot_state": r["state"],
-        "alarm_code": r["alarm"],
-        "cycle_count": r["cycles"],
-        "position_est_pct": round(r["pos"] * 100),
+    values = {
+        "cmd_start": False, "cmd_stop": False, "cmd_return": False, "cmd_reset_alarm": False,
         "cycles_setpoint": r["cycles_setpoint"],
-        # PLC inputs / outputs
-        "limit_1": r["pos"] <= 0.0,
-        "limit_2": r["pos"] >= 1.0,
-        "start_stop_btn": False,
-        "mode_switch": sim["mode"] == "MANUAL",   # OFF = Auto (assumed polarity)
-        "estop_ok": not sim["estop"],
-        "drive_run": moving,
-        "drive_dir": r["dir_to_end2"],
-        # Pi -> PLC
         "battery_pct": round(r["battery"]),
-        "pi_heartbeat": int(datetime.now().timestamp() / 2) % 65536,
-        # PZEM-017 via PLC
-        "pzem_voltage": volt,
-        "pzem_current": amp,
-        "pzem_power": volt * amp,
-        "pzem_energy": r["energy_wh"],
-        # Tuya Cloud (not a PLC tag)
-        "solar_w": solar_w,
+        "pi_heartbeat": int(now / 2) % 65536,
+        "robot_state": r["state"], "alarm_code": r["alarm"], "cycle_count": r["cycles"],
+        "position_est_pct": round(r["pos"] * 100),
+        "limit_1": r["pos"] <= 0.0, "limit_2": r["pos"] >= 1.0,
+        "start_stop_btn": False,
+        "mode_switch": sim["mode"] == "MANUAL",
+        "estop_ok": not sim["estop"],
+        "drive_run": moving, "drive_dir": r["dir_to_end2"],
+        "pzem_voltage": round(volt, 2), "pzem_current": round(amp, 2),
+        "pzem_power": round(volt * amp, 1), "pzem_energy": round(r["energy_wh"]),
     }
+
+    # Events, like app/poller.py WATCHED changes
+    names = ["Idle", "Cleaning", "Returning", "Home", "Alarm"]
+    new = (r["state"], r["alarm"], sim["estop"], sim["mode"])
+    if new != prev:
+        msgs = []
+        if new[0] != prev[0]:
+            msgs.append(f"robot_state: {names[prev[0]]} -> {names[new[0]]}")
+        if new[1] != prev[1]:
+            msgs.append(f"alarm_code: {prev[1]} -> {new[1]}")
+        if new[2] != prev[2]:
+            msgs.append("estop_ok: " + ("PRESSED" if new[2] else "released"))
+        if new[3] != prev[3]:
+            msgs.append(f"mode_switch: {prev[3].title()} -> {new[3].title()}")
+        ss.sim_log[:0] = [(now, "change", m) for m in msgs]
+        del ss.sim_log[15:]
+    ss.sim_hist.append((now, values["pzem_voltage"], values["battery_pct"]))
+    del ss.sim_hist[:-120]
+
+    return {"ts": now, "online": True, "gateway_up": True, "values": values,
+            "solar_w": solar_w, "history": ss.sim_hist, "events": ss.sim_log}
 
 
 # ============================================================
@@ -192,42 +225,49 @@ def modbus_address(device):
 # ============================================================
 # Session defaults
 # ============================================================
-if "robot" not in st.session_state:
-    st.session_state.robot = new_robot()
-    st.session_state.volt_hist = []
-    st.session_state.sim_events = {}
-    st.session_state.schedule = pd.DataFrame([
+ss = st.session_state
+if "robot" not in ss:
+    ss.robot = new_robot()
+    ss.sim_hist, ss.sim_log, ss.sim_events = [], [], {}
+    ss.schedule = pd.DataFrame([
         {"เปิดใช้": True,  "เวลา": dtime(8, 0),  "จำนวนรอบ": 2},
         {"เปิดใช้": True,  "เวลา": dtime(12, 0), "จำนวนรอบ": 1},
         {"เปิดใช้": False, "เวลา": dtime(16, 0), "จำนวนรอบ": 1},
     ])
 
+LIVE = HISTORY_DB.exists()
+
 
 # ============================================================
-# Sidebar: hardware simulator (testing only)
+# Sidebar: data source + hardware simulator
 # ============================================================
-ev = st.session_state.sim_events
+sim = ss.sim_events
 with st.sidebar:
-    st.header("🧪 จำลองฮาร์ดแวร์")
-    st.caption("ใช้ทดสอบหน้าจอเท่านั้น ของจริงสั่งงานที่ตัวเครื่อง")
-    mode = st.radio("สวิตช์ Mode หน้าเครื่อง (X3)", ["AUTO", "MANUAL"], horizontal=True)
-    estop = st.toggle("กด E-stop (X4)")
-    c = st.columns(2)
-    if c[0].button("▶ Start (X2)", width="stretch"):
-        ev["start"] = True
-    if c[1].button("■ Stop (X2)", width="stretch"):
-        ev["stop"] = True
-    if st.button("Reset alarm", width="stretch", disabled=estop):
-        ev["reset"] = True
-    if st.button("⏰ ถึงเวลาตามตาราง", width="stretch"):
-        sched = st.session_state.schedule
-        on = sched[sched["เปิดใช้"] == True].dropna()  # noqa: E712
-        if len(on):
-            st.session_state.robot["cycles_setpoint"] = int(on.iloc[0]["จำนวนรอบ"])
-        ev["start"] = True
-    st.caption("ปุ่ม “ถึงเวลาตามตาราง” = Pi เขียน cycles_setpoint แล้วส่ง cmd_start")
-
-sim = ev
+    st.header("แหล่งข้อมูล")
+    if LIVE:
+        st.success(f"Gateway DB · `{HISTORY_DB.name}`")
+        st.caption("อ่านอย่างเดียวจาก SQLite ที่ gateway เขียน")
+        mode, estop = "AUTO", False
+    else:
+        st.info("ข้อมูลจำลอง (ไม่พบ gateway DB)")
+        st.divider()
+        st.header("🧪 จำลองฮาร์ดแวร์")
+        st.caption("ใช้ทดสอบหน้าจอเท่านั้น ของจริงสั่งงานที่ตัวเครื่อง")
+        mode = st.radio("สวิตช์ Mode หน้าเครื่อง (X3)", ["AUTO", "MANUAL"], horizontal=True)
+        estop = st.toggle("กด E-stop (X4)")
+        c = st.columns(2)
+        if c[0].button("▶ Start (X2)", width="stretch"):
+            sim["start"] = True
+        if c[1].button("■ Stop (X2)", width="stretch"):
+            sim["stop"] = True
+        if st.button("Reset alarm", width="stretch", disabled=estop):
+            sim["reset"] = True
+        if st.button("⏰ ถึงเวลาตามตาราง", width="stretch"):
+            on = ss.schedule[ss.schedule["เปิดใช้"] == True].dropna()  # noqa: E712
+            if len(on):
+                ss.robot["cycles_setpoint"] = int(on.iloc[0]["จำนวนรอบ"])
+            sim["start"] = True
+        st.caption("“ถึงเวลาตามตาราง” = Pi เขียน cycles_setpoint แล้วส่ง cmd_start")
 sim["mode"], sim["estop"] = mode, estop
 
 
@@ -235,7 +275,8 @@ sim["mode"], sim["estop"] = mode, estop
 # Top: weather
 # ============================================================
 st.title("☀️ Solar Panel Cleaning Robot")
-st.caption("ข้อมูลจำลอง (Mockup) · ตาม docs/robot-operation.md")
+st.caption(("ข้อมูลจริงจาก gateway" if LIVE else "ข้อมูลจำลอง (Mockup)")
+           + " · สภาพอากาศเป็นข้อมูลจำลอง")
 
 w = get_weather()
 with st.container(border=True):
@@ -294,17 +335,33 @@ def position_bar(at_end1, at_end2, is_home, moving_to_end2):
     return f"<div style='display:flex;gap:6px'>{html}</div>"
 
 
+def fmt_ts(ts):
+    return datetime.fromtimestamp(ts).strftime("%H:%M:%S")
+
+
 @st.fragment(run_every="1s")
 def live_section():
-    plc = read_plc(sim)
+    try:
+        data = read_gateway(HISTORY_DB) if LIVE else read_simulation(sim)
+    except sqlite3.Error as exc:
+        st.error(f"อ่าน gateway DB ไม่ได้: {exc}")
+        return
+    if data is None or data["values"] is None:
+        st.warning("Gateway ยังไม่เคยอ่านค่าจาก PLC ได้ · รอ gateway เชื่อมต่อ PLC")
+        return
+    plc = data["values"]
     state, alarm = plc["robot_state"], plc["alarm_code"]
 
-    # --- Emergency ---
+    # --- Connection / Emergency ---
+    if not data["gateway_up"]:
+        st.error(f"⚠️ Gateway ไม่อัปเดตข้อมูล (ล่าสุด {fmt_ts(data['ts'])}) · ค่าด้านล่างอาจไม่ตรงกับปัจจุบัน")
+    elif not data["online"]:
+        st.error("⚠️ PLC offline · แสดงค่าล่าสุดที่อ่านได้")
     if not plc["estop_ok"]:
         st.error("🛑 **EMERGENCY STOP** · E-stop ถูกกดที่ตัวเครื่อง ไฟมอเตอร์ถูกตัดทางฮาร์ดแวร์ "
                  "· ปลด E-stop แล้วกด Reset ที่ตัวเครื่อง")
     elif alarm:
-        st.warning(f"⚠️ Alarm {alarm}: {ALARM_TEXT[alarm]}")
+        st.warning(f"⚠️ Alarm {alarm}: {ALARM_TEXT.get(alarm, f'ไม่รู้จัก ({alarm})')}")
 
     col_robot, col_batt = st.columns([3, 2])
 
@@ -317,15 +374,15 @@ def live_section():
             IDLE: ("หยุด", "#B86E00"),
             HOME: ("อยู่ที่ Home", "#1E5F74"),
             ALARM: ("หยุด (Alarm)", "#C0392B"),
-        }[state]
+        }.get(state, (f"ไม่รู้จัก ({state})", "#777777"))
         detail = {
             CLEANING: f"ทำความสะอาด · รอบ {plc['cycle_count'] + 1}"
                       + (f"/{plc['cycles_setpoint']}" if not plc["mode_switch"] else ""),
             RETURNING: "กำลังกลับจุดพักที่ใกล้ที่สุด",
             IDLE: "หยุดกลางแผง (กด Stop)",
             HOME: "จอดที่ปลายแถว พร้อมรับคำสั่ง",
-            ALARM: ALARM_TEXT[alarm],
-        }[state]
+            ALARM: ALARM_TEXT.get(alarm, ""),
+        }.get(state, "")
         st.markdown(f"{badge(text, color)} &nbsp; {detail}", unsafe_allow_html=True)
         st.write("")
         st.caption("ตำแหน่งหุ่นยนต์ (รู้จริงเฉพาะปลายแถว 2 จุด)")
@@ -337,7 +394,7 @@ def live_section():
         c[0].metric("โหมด (สวิตช์ X3)", "MANUAL" if plc["mode_switch"] else "AUTO")
         c[1].metric("รอบที่ทำเสร็จ", plc["cycle_count"])
         c[2].metric("E-stop", "ปกติ" if plc["estop_ok"] else "กดอยู่")
-        st.caption("Start / Stop / เลือกโหมด ทำที่ตัวเครื่อง · Dashboard อ่านอย่างเดียว")
+        st.caption(f"Start / Stop / เลือกโหมด ทำที่ตัวเครื่อง · อัปเดตล่าสุด {fmt_ts(data['ts'])}")
 
     # --- Battery & power ---
     with col_batt, st.container(border=True):
@@ -347,7 +404,7 @@ def live_section():
         c[0].metric("ประจุ (Tuya)", f"{pct} %")
         c[1].metric("แรงดัน (PZEM)", f"{plc['pzem_voltage']:.1f} V")
         c[2].metric("กระแส (PZEM)", f"{plc['pzem_current']:.2f} A")
-        st.progress(pct / 100)
+        st.progress(max(0, min(100, pct)) / 100)
         if pct >= BATT_START_MIN:
             st.caption(f"✅ พร้อมออกทำงาน (≥ {BATT_START_MIN} %)")
         elif pct >= BATT_LOW:
@@ -355,13 +412,26 @@ def live_section():
         else:
             st.caption(f"⚠️ ต่ำกว่า {BATT_LOW} % · กลับจุดพัก")
         c = st.columns(3)
-        c[0].metric("Solar (Tuya)", f"{plc['solar_w']:.0f} W")
+        c[0].metric("Solar (Tuya)", "—" if data["solar_w"] is None else f"{data['solar_w']:.0f} W")
         c[1].metric("กำลัง (PZEM)", f"{plc['pzem_power']:.0f} W")
         c[2].metric("พลังงานสะสม", f"{plc['pzem_energy'] / 1000:.2f} kWh")
-        hist = st.session_state.volt_hist
-        hist.append(plc["pzem_voltage"])
-        del hist[:-60]
-        st.line_chart(pd.DataFrame({"แรงดัน (V)": hist}), height=120)
+        hist = data["history"]
+        if len(hist) >= 2:
+            df = pd.DataFrame(hist, columns=["ts", "แรงดัน (V)", "แบต (%)"])
+            df["เวลา"] = pd.to_datetime(df["ts"], unit="s", utc=True).dt.tz_convert(
+                datetime.now().astimezone().tzinfo)
+            st.line_chart(df.set_index("เวลา")[["แรงดัน (V)"]], height=120)
+            st.caption("แรงดัน 30 นาทีล่าสุด" + (" (snapshot จาก gateway)" if LIVE else ""))
+
+    # --- Events ---
+    with st.container(border=True):
+        st.subheader("📜 เหตุการณ์ล่าสุด")
+        if data["events"]:
+            st.dataframe(pd.DataFrame([{"เวลา": fmt_ts(t), "ประเภท": k, "รายละเอียด": m}
+                                       for t, k, m in data["events"]]),
+                         hide_index=True, width="stretch", height=250)
+        else:
+            st.caption("ยังไม่มีเหตุการณ์")
 
     # --- Tag monitor ---
     with st.container(border=True):
@@ -370,17 +440,18 @@ def live_section():
                    "· X/Y ยืนยันแล้ว")
         rows = []
         for name, t in load_tags(TAGS_FILE).items():
-            raw = plc.get(name)
-            if t["type"] == "bool":
-                raw = int(bool(raw))
-                value = "ON" if raw else "OFF"
+            val = plc.get(name)
+            if val is None:
+                raw, shown = "—", "—"
+            elif t["type"] == "bool":
+                raw, shown = int(bool(val)), ("ON" if val else "OFF")
             else:
-                value = f"{raw:.2f}".rstrip("0").rstrip(".") + " " + t.get("unit", "")
-                raw = round(raw / t.get("scale", 1))
+                raw = round(val / t.get("scale", 1))
+                shown = (f"{val:.2f}".rstrip("0").rstrip(".") + " " + t.get("unit", "")).strip()
             rows.append({
                 "Tag": name, "Device": t["device"],
                 "Modbus": f"0x{modbus_address(t['device']):04X}",
-                "Dir": t["dir"], "Type": t["type"], "Raw": raw, "ค่า": value.strip(),
+                "Dir": t["dir"], "Type": t["type"], "Raw": str(raw), "ค่า": shown,
                 "ยืนยัน": "✅" if t["device"][0] in "XY" else "❓",
                 "ความหมาย": t.get("desc", ""),
             })
@@ -392,24 +463,24 @@ live_section()
 
 
 # ============================================================
-# Auto mode: schedule + cycles
+# Auto mode: schedule + cycles (step 7 on the gateway)
 # ============================================================
 with st.container(border=True):
     st.subheader("🗓️ โหมดอัตโนมัติ · ตารางเวลาทำความสะอาด")
-    st.caption("ถึงเวลา Pi จะเขียน cycles_setpoint (D101) แล้วส่ง cmd_start (M100) "
+    st.caption("ถึงเวลา Pi จะส่งคำสั่ง `cycles N` แล้ว `start` ผ่าน command queue "
                f"· ทำงานเฉพาะเมื่อสวิตช์ X3 อยู่ที่ AUTO และแบต ≥ {BATT_START_MIN} %")
-    if mode == "MANUAL":
+    if not LIVE and mode == "MANUAL":
         st.warning("สวิตช์หน้าเครื่องอยู่ที่ MANUAL · ตารางเวลาจะไม่ทำงาน")
 
     edited = st.data_editor(
-        st.session_state.schedule,
+        ss.schedule,
         num_rows="dynamic",
         hide_index=True,
         width="stretch",
         column_config={
             "เปิดใช้": st.column_config.CheckboxColumn(default=True),
             "เวลา": st.column_config.TimeColumn(format="HH:mm", step=300, required=True),
-            "จำนวนรอบ": st.column_config.NumberColumn(min_value=1, max_value=10, step=1,
+            "จำนวนรอบ": st.column_config.NumberColumn(min_value=1, max_value=100, step=1,
                                                         default=1, required=True),
         },
         key="schedule_editor",
@@ -426,5 +497,5 @@ with st.container(border=True):
     c[2].metric("รวมต่อวัน", f"{int(active['จำนวนรอบ'].sum())} รอบ")
 
     if st.button("💾 บันทึกตารางเวลา", type="primary"):
-        st.session_state.schedule = edited
-        st.success("บันทึกแล้ว (จำลอง) · ของจริงเก็บตารางไว้ที่ Pi")
+        ss.schedule = edited
+        st.success("บันทึกแล้ว (จำลอง) · การรันตามตารางจริงเป็นงาน step 7 ของ gateway")

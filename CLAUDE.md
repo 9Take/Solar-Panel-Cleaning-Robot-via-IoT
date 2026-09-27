@@ -11,7 +11,7 @@ The owner is a student. Explanations may be in Thai; code, identifiers, commits,
 
 - **Done:** Hardware + PLC ladder logic (the robot runs standalone on the PLC).
 - **Now:** IoT layer — a Raspberry Pi that reads status from the PLC and sends commands to it.
-- **Later:** User-facing monitoring/control UI. Stack is undecided; it must stay simple because the first goal is a demo for the sponsoring company. Do not pick a UI/cloud stack without asking.
+- **Dashboard:** Python + Streamlit mockup in `dashboard/` (owner asked for "Python, as simple as possible"). It must stay simple because the first goal is a demo for the sponsoring company. Ask before adding any other UI/cloud stack.
 
 ## Roadmap (one step at a time — stop for owner review after each)
 
@@ -28,7 +28,7 @@ Keep the progress tables in `README.md` (Thai + English sections) in sync with t
 - [x] **5. Commands** — `app/commander.py` `PlcCommander` (10 safety rules in its docstring: whitelist, pulse + 2 s ack else Pi clears the bit, Stop never blocked and wins over Start, pre-checks explain refusals, lock + debounce, no retries, cycles 1-100). Writes only via `PlcClient._write` (read-only public API). Dashboard/CLI send via SQLite `commands` queue (`app/command_queue.py`, 5 s expiry, stop first, audited in `events`). CLI: `python -m app.cmd start|stop|return|reset|cycles N`
 - [ ] **6. Battery (Tuya) + heartbeat** — read battery % from Tuya Cloud API, write `battery_pct` + `pi_heartbeat` to the PLC; PZEM values read from PLC D registers
 - [ ] **7. Schedule** — timed cleaning runs
-- [ ] **8. UI / API** — stack TBD with owner
+- [ ] **8. UI / API** — Streamlit dashboard mockup `dashboard/app.py` (in progress): reads `HISTORY_DB` read-only, falls back to built-in simulation when the DB is missing. See **Dashboard**
 
 ## Hardware
 
@@ -37,6 +37,11 @@ Keep the progress tables in `README.md` (Thai + English sections) in sync with t
 | PLC | Delta **DVP-12SE11T** (DVP-SE series, built-in Ethernet) |
 | Gateway | Raspberry Pi 4/5, Raspberry Pi OS |
 | Link | Ethernet, **Modbus TCP**, PLC is the server (port 502), Pi is the client |
+| Battery | Li-ion **48 V, 10.2 Ah**, 10 A fuse + main switch; charged from solar via Tuya MPPT (no charging dock) |
+| Power | Step-down 48 V → 24 V feeds the PLC and the MD30C |
+| Drive | Y0 → PWM, Y1 → DIR through a **PC817** opto-isolator (24 V S/S side, 5 V to the MD30C) → Cytron **MD30C** → DC motor |
+
+Source: owner's wiring sketch. In the sketch the motor switch sits between the MD30C and the motor, while `docs/robot-operation.md` §2.3 says the E-stop cuts the MD30C supply — confirm with the owner.
 
 ## Architecture
 
@@ -126,6 +131,22 @@ No fixed parameter lives in code. Two places only:
 
 Single source of truth: `config/plc_tags.yaml`. Code refers to tags by name, never by raw address. **Fill in from the ladder program — do not guess addresses.**
 
+## Dashboard
+
+`streamlit run dashboard/app.py` from the repo root. Reads `latest` / `snapshots` / `events` from `HISTORY_DB` (read-only); without the DB it runs its own simulation with a sidebar for the hardware (mode switch, E-stop, Start/Stop, Reset, schedule trigger). Weather and solar power (Tuya, step 6) are simulated for now.
+
+Layout decided by the owner (top to bottom):
+
+1. **Weather** at the top (temp, humidity, wind, rain chance, irradiance, dust, rain forecast, "OK to clean?" hint). Source TBD.
+2. **Robot status** — only three states for the user: **working** (`robot_state` Cleaning/Returning), **stopped** (Idle, or Alarm), **home** (Home). Show `alarm_code` text.
+3. **Position** — only three points: end 1 (X0), between panels, end 2 (X1). Whichever end the robot rests at is Home. No percentage track.
+4. **Emergency** — full-width red banner when `estop_ok` = 0. Also banners for PLC offline and a stale `latest` row (gateway down).
+5. **Battery** (Tuya %, PZEM V/A/W/Wh, solar W, thresholds 80 / 25 / 20 %), **events** and **PLC Tag Monitor**.
+6. **Auto mode schedule** — list of times, each with a number of cycles (1–100). Running it is step 7 on the gateway (`cycles N` then `start` via the command queue).
+
+- No user accounts / login for now — focus on the system.
+- **No control buttons on the dashboard.** Start/Stop and mode selection are done on the hardware; the dashboard only reads.
+
 ## Rules for Claude
 
 - **Never write to a PLC address that is not in the tag map.** Unknown address = ask.
@@ -141,4 +162,5 @@ Single source of truth: `config/plc_tags.yaml`. Code refers to tags by name, nev
 - PLC IP address, Modbus unit/slave ID, whether Modbus TCP server is enabled on the PLC
 - Full tag map (M/D devices used in the ladder for commands, status, alarms, battery)
 - Battery/charging measurement: which D registers, scaling/units
-- UI/monitoring stack and whether remote (internet) access is needed for the demo
+- Whether remote (internet) access to the dashboard is needed for the demo
+- Weather data source (API) for the dashboard

@@ -46,7 +46,7 @@ flowchart LR
 | 5 | คำสั่ง Start/Stop/Return/Reset | เสร็จ |
 | 6 | แบตเตอรี่ / การชาร์จ | ยังไม่เริ่ม |
 | 7 | ตั้งเวลา | ยังไม่เริ่ม |
-| 8 | UI / API | ยังไม่เริ่ม |
+| 8 | UI / API | Dashboard mockup (Streamlit) กำลังทำ |
 
 ### โครงสร้างไฟล์
 
@@ -259,7 +259,7 @@ flowchart LR
 | 5 | Start/Stop/Return/Reset commands | Done |
 | 6 | Battery / charging | Not started |
 | 7 | Schedule | Not started |
-| 8 | UI / API | Not started |
+| 8 | UI / API | Dashboard mockup (Streamlit) in progress |
 
 ### Project Structure
 
