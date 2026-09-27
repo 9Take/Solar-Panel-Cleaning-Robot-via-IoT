@@ -2,7 +2,9 @@
 
 from pathlib import Path
 
-from pydantic import Field, SecretStr
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -41,12 +43,23 @@ class Settings(BaseSettings):
     api_key: SecretStr | None = None
     api_secret: SecretStr | None = None
 
+    schedule_tz: str = "Asia/Bangkok"     # time zone of the schedule times (container runs in UTC)
+
     history_db: Path = Path("logs/gateway.db")
     snapshot_interval_s: float = Field(10.0, gt=0)
     history_retention_days: float = Field(30.0, gt=0)
 
     log_dir: Path = Path("logs")
     log_level: str = "INFO"
+
+    @field_validator("schedule_tz")
+    @classmethod
+    def _known_tz(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError(f"unknown time zone {value!r}, e.g. Asia/Bangkok") from None
+        return value
 
     def missing_tuya_keys(self) -> list[str]:
         """Tuya settings still empty (all needed for the battery feed)."""
