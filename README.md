@@ -48,7 +48,7 @@ flowchart LR
 | 5 | คำสั่ง Start/Stop/Return/Reset | เสร็จ |
 | 6 | แบตเตอรี่ / การชาร์จ | เสร็จ (Tuya + heartbeat) |
 | 7 | ตั้งเวลา | เสร็จ (SQLite + CLI) |
-| 8 | UI / API | ยังไม่เริ่ม |
+| 8 | UI / API | กำลังทำ (Streamlit dashboard ไว้เทียบกับของเพื่อน) |
 
 ### โครงสร้างไฟล์
 
@@ -281,7 +281,7 @@ Per-step guides (how it works, usage, testing; in Thai): [`docs/process/`](docs/
 | 5 | Start/Stop/Return/Reset commands | Done |
 | 6 | Battery / charging | Done (Tuya + heartbeat) |
 | 7 | Schedule | Done (SQLite + CLI) |
-| 8 | UI / API | Not started |
+| 8 | UI / API | In progress (Streamlit dashboard, to compare) |
 
 ### Project Structure
 

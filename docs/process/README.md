@@ -1,4 +1,4 @@
-# คู่มือแต่ละ process (ขั้นที่ 1–7)
+# คู่มือแต่ละ process (ขั้นที่ 1–8)
 
 เอกสารชุดนี้อธิบายโค้ดฝั่ง Raspberry Pi ทีละขั้นตาม roadmap ทุกไฟล์แบ่งหัวข้อเหมือนกัน: **หน้าที่ → ทำงานยังไง → วิธีใช้ → วิธีเทส → ข้อควรรู้**
 
@@ -11,6 +11,7 @@
 | 5 | [Commands](05-commands.md) | `app/commander.py`, `app/command_queue.py`, `app/cmd.py` | `test_commands` |
 | 6 | [Battery (Tuya) + heartbeat](06-battery-heartbeat.md) | `app/tuya.py`, `app/battery.py`, `app/sim/battery_demo.py` | `test_tuya`, `test_battery` |
 | 7 | [Schedule](07-schedule.md) | `app/schedule.py` | `test_schedule` |
+| 8 | [Dashboard (Streamlit)](08-dashboard.md) | `app/dashboard/` | `test_dashboard` |
 
 ## ภาพรวมการไหลของข้อมูล
 
@@ -27,7 +28,7 @@
                     │                                                                    │
                     │  ทุกตัวเขียนผลลง SQLite  logs/gateway.db                              │
                     └────────────────────────────────────────────────────────────────────┘
- dashboard / CLI ──> อ่าน/เขียน SQLite เท่านั้น (ไม่คุย Modbus เอง)
+ dashboard (Streamlit :8501) / CLI ──> อ่าน/เขียน SQLite เท่านั้น (ไม่คุย Modbus เอง)
 ```
 
 ## เตรียมเครื่องสำหรับเทส

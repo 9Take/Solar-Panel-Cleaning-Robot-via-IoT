@@ -45,6 +45,10 @@ class Settings(BaseSettings):
 
     schedule_tz: str = "Asia/Bangkok"     # time zone of the schedule times (container runs in UTC)
 
+    # Streamlit dashboard. Empty password = no login (LAN demo only).
+    dashboard_password: SecretStr = SecretStr("")
+    dashboard_refresh_s: float = Field(2.0, ge=1)
+
     history_db: Path = Path("logs/gateway.db")
     snapshot_interval_s: float = Field(10.0, gt=0)
     history_retention_days: float = Field(30.0, gt=0)
