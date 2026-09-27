@@ -6,8 +6,9 @@
 - Connection loss raises PlcOfflineError; the next call reconnects, with
   exponential backoff between failed attempts.
 
-The public API is read-only. Writing is only done by app.commander.PlcCommander
-through _write(), which enforces the command safety rules.
+The public API is read-only. Only two callers use _write():
+app.commander.PlcCommander (command safety rules) and app.battery.BatteryFeeder
+(battery_pct + pi_heartbeat only).
 """
 
 from __future__ import annotations
@@ -176,7 +177,7 @@ class PlcClient:
         return values
 
     async def _write(self, name: str, value: Value) -> None:
-        """Write one tag. Internal: use app.commander.PlcCommander, never call directly."""
+        """Write one tag. Internal: only PlcCommander and BatteryFeeder call this."""
         tag = self.tags[name]
         if not tag.writable:
             raise PermissionError(f"Tag {name!r} is dir: {tag.dir.value}; writing is not allowed")

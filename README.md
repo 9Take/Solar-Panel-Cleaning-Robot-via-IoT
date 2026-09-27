@@ -44,7 +44,7 @@ flowchart LR
 | 3 | Client อ่านค่า (read-only) | เสร็จ |
 | 4 | Polling + logging | เสร็จ (SQLite) |
 | 5 | คำสั่ง Start/Stop/Return/Reset | เสร็จ |
-| 6 | แบตเตอรี่ / การชาร์จ | ยังไม่เริ่ม |
+| 6 | แบตเตอรี่ / การชาร์จ | เสร็จ (Tuya + heartbeat) |
 | 7 | ตั้งเวลา | ยังไม่เริ่ม |
 | 8 | UI / API | ยังไม่เริ่ม |
 
@@ -257,7 +257,7 @@ flowchart LR
 | 3 | Read client (read-only) | Done |
 | 4 | Polling + logging | Done (SQLite) |
 | 5 | Start/Stop/Return/Reset commands | Done |
-| 6 | Battery / charging | Not started |
+| 6 | Battery / charging | Done (Tuya + heartbeat) |
 | 7 | Schedule | Not started |
 | 8 | UI / API | Not started |
 
