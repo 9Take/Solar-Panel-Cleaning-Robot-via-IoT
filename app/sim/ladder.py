@@ -9,29 +9,13 @@ This is a reference model for the real ladder, not a replacement for it.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import IntEnum
+
+from app.robot import Alarm, State
 
 TOWARD_END_2 = True   # drive_dir = 1 -> moving toward X1 (assumed polarity)
 TOWARD_END_1 = False
 
 COMMANDS = ("cmd_start", "cmd_stop", "cmd_return", "cmd_reset_alarm")
-
-
-class State(IntEnum):
-    IDLE = 0
-    CLEANING = 1
-    RETURNING = 2
-    HOME = 3
-    ALARM = 4
-
-
-class Alarm(IntEnum):
-    NONE = 0
-    ESTOP = 1
-    BATTERY_CRITICAL = 2
-    STUCK = 3            # future: travel timeout
-    BOTH_LIMITS = 4
-    HEARTBEAT_LOST = 5
 
 
 @dataclass

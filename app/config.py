@@ -29,5 +29,9 @@ class Settings(BaseSettings):
     api_key: SecretStr | None = None
     api_secret: SecretStr | None = None
 
+    history_db: Path = Path("logs/gateway.db")
+    snapshot_interval_s: float = Field(10.0, gt=0)
+    history_retention_days: float = Field(30.0, gt=0)
+
     log_dir: Path = Path("logs")
     log_level: str = "INFO"
