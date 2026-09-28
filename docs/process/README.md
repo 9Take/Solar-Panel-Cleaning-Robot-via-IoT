@@ -46,8 +46,8 @@ test ไม่ต้องใช้ PLC จริง ไม่ต้องมี
 ## รันทั้งระบบกับ mock PLC (ลองมือ)
 
 ```bash
-# Docker: ตั้ง PLC_HOST=plc-sim ใน .env
-docker compose --profile sim up --build
+# Docker: ไม่ต้องแก้ .env
+docker compose -f docker-compose.yml -f docker-compose.sim.yml up -d --build
 
 # ไม่ใช้ Docker: 2 terminal
 SIM_PORT=5020 .venv/bin/python -m app.sim

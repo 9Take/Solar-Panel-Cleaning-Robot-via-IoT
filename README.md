@@ -127,8 +127,9 @@ Modbus TCP server ที่ทำตัวเหมือน DVP-12SE11T มี�
 ทดสอบ step 6 (ส่งค่าแบต + heartbeat) ด้วยมือ ไม่ต้องมีบัญชี Tuya: `docker compose run --rm gateway python -m app.sim.battery_demo` — ใช้ Tuya ปลอมตาม timeline (ปกติ → Tuya ล่ม → กลับมา → ค่าผิด → แบตวิกฤต) ประมาณ 30 วินาที แล้วสรุป PASS/FAIL
 
 ```bash
-# ผ่าน Docker: ตั้ง PLC_HOST=plc-sim ใน .env ก่อน
-docker compose --profile sim up --build
+# ผ่าน Docker: ไม่ต้องแก้ .env (ไฟล์ sim ชี้ gateway ไปที่ mock ให้ และเก็บประวัติแยกที่ logs/sim/)
+docker compose -f docker-compose.yml -f docker-compose.sim.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.sim.yml down
 # จากเครื่อง host ต่อได้ที่ localhost:5020 (เช่น Modbus Poll)
 
 # รันตรงบนเครื่อง (ไม่ใช้ Docker): ตั้ง SIM_PORT=5020 ใน .env
@@ -360,8 +361,9 @@ It simulates the robot per `docs/robot-operation.md`: ladder state machine, trav
 Manual test of step 6 (battery feed + heartbeat), no Tuya account needed: `docker compose run --rm gateway python -m app.sim.battery_demo`. A fake Tuya follows a timeline (normal → Tuya down → back → invalid value → critical battery) for about 30 s, then prints PASS/FAIL per phase.
 
 ```bash
-# With Docker: set PLC_HOST=plc-sim in .env first
-docker compose --profile sim up --build
+# With Docker: no .env change (the sim file points the gateway at the mock and keeps history in logs/sim/)
+docker compose -f docker-compose.yml -f docker-compose.sim.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.sim.yml down
 # From the host, connect to localhost:5020 (e.g. Modbus Poll)
 
 # Directly on the machine (no Docker): set SIM_PORT=5020 in .env

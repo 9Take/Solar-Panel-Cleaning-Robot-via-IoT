@@ -1,3 +1,7 @@
+# Real use (Raspberry Pi + real PLC): gateway + dashboard.
+#   docker compose up -d --build
+# PLC address comes from .env (PLC_HOST / PLC_PORT).
+# Testing without the PLC: add docker-compose.sim.yml (see that file).
 services:
   gateway:
     build:
@@ -10,25 +14,6 @@ services:
       - ./logs:/app/logs
     restart: unless-stopped
     # Default bridge network can reach the PLC on the LAN (outbound Modbus TCP).
-
-  # Mock Modbus TCP server for testing without the real PLC.
-  # Start with: docker compose --profile sim up
-  # and set PLC_HOST=plc-sim in .env
-  plc-sim:
-    profiles: ["sim"]
-    build:
-      context: .
-      target: gateway
-    image: solarbot-gateway:latest
-    command: ["python", "-m", "app.sim"]
-    env_file: .env
-    environment:          # fixed inside the container, overrides .env
-      SIM_HOST: "0.0.0.0"
-      SIM_PORT: "502"
-    ports:
-      - "5020:502"   # reach the mock from the host (e.g. Modbus Poll) at localhost:5020
-    volumes:
-      - ./config:/app/config:ro
 
   # Streamlit dashboard: open http://<pi-ip>:8501 from a phone or PC on the LAN.
   # Reads/writes the gateway's SQLite DB only (status, commands queue, schedules).

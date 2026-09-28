@@ -59,8 +59,8 @@ state ของ ladder (`robot_state`):
 ## วิธีใช้
 
 ```bash
-# Docker (ตั้ง PLC_HOST=plc-sim ใน .env ให้ gateway มาต่อ)
-docker compose --profile sim up --build
+# Docker: ไม่ต้องแก้ .env ไฟล์ sim ชี้ gateway ไปที่ mock ให้
+docker compose -f docker-compose.yml -f docker-compose.sim.yml up -d --build
 
 # ไม่ใช้ Docker
 SIM_PORT=5020 .venv/bin/python -m app.sim

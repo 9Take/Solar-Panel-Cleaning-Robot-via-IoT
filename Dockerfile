@@ -26,7 +26,7 @@ ENV PYTHONPATH=/app
 EXPOSE 8501
 CMD ["streamlit", "run", "app/dashboard/main.py", \
      "--server.address=0.0.0.0", "--server.port=8501", "--server.headless=true", \
-     "--browser.gatherUsageStats=false"]
+     "--browser.gatherUsageStats=false", "--client.toolbarMode=minimal"]
 
 
 # Gateway service + mock PLC. Last stage = default target of a plain `docker build .`

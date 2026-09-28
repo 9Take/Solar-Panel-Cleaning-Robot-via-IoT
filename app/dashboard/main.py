@@ -102,10 +102,13 @@ def run_command(command: str, value=None) -> None:
         st.error(f"{command} {row['status']}: {row['result']}", icon="❌")
 
 
-def control_panel() -> None:
-    st.subheader("Control")
+def stop_button() -> None:
+    """Above everything else: on a phone the status tiles stack, and STOP must not need scrolling."""
     if st.button("STOP", icon="⏹️", type="primary", width="stretch"):
         run_command("stop")
+
+
+def control_panel() -> None:
     cols = st.columns(3)
     if cols[0].button("Start", icon="▶️", width="stretch"):
         run_command("start")
@@ -197,6 +200,7 @@ def main() -> None:
     st.title("🤖 Solar Panel Cleaning Robot")
     login_gate()
     tz = ZoneInfo(settings().schedule_tz)
+    stop_button()
     status_panel()
     tab_control, tab_schedule, tab_history = st.tabs(["Control", "Schedule", "History"])
     with tab_control:

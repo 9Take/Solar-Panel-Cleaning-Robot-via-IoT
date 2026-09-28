@@ -25,7 +25,7 @@
   - 🟢 PLC online
   - 🔴 PLC offline (แสดงค่าล่าสุดที่รู้)
   - ⚪ gateway ไม่อัปเดตเกิน 10 วิ (gateway ดับ แถว `latest` จะค้าง `online=1` ตลอด เลยดูจากอายุของข้อมูลแทน)
-- **คำสั่ง** เขียนลงตาราง `commands` แล้วรอผลจาก gateway สูงสุด 10 วิ กฎความปลอดภัยของขั้นที่ 5 ใช้ครบเพราะไปทางเดียวกับ CLI ปุ่ม STOP อยู่บนสุดและใหญ่ที่สุด
+- **คำสั่ง** เขียนลงตาราง `commands` แล้วรอผลจาก gateway สูงสุด 10 วิ กฎความปลอดภัยของขั้นที่ 5 ใช้ครบเพราะไปทางเดียวกับ CLI ปุ่ม STOP อยู่บนสุดของหน้า (เหนือช่องสถานะ นอกแท็บ) เพราะบนมือถือช่องสถานะเรียงลงมาเป็นแถวเดียว ถ้าอยู่ข้างล่างต้องเลื่อนหา
 - **Schedule** ใช้ฟังก์ชันใน `app/schedule.py` ตัวเดียวกับ CLI
 - **History** กราฟแบต % และกำลังไฟ W **แยก 2 กราฟ** (หน่วยต่างกัน ไม่ใช้กราฟ 2 แกน) + ตาราง event ล่าสุด 100 รายการ
 - สถานะใช้ไอคอน + ข้อความคู่กันเสมอ ไม่ใช้สีอย่างเดียว
@@ -37,12 +37,22 @@
 
 ## วิธีใช้
 
+**ใช้งานจริง** (Pi + PLC จริง, `PLC_HOST` ใน `.env` = IP ของ PLC) — gateway + dashboard:
+
 ```bash
-# บน Pi (หรือเครื่อง dev ที่มี Docker)
-docker compose up -d --build                     # gateway + dashboard
-docker compose --profile sim up -d --build       # + mock PLC (ตั้ง PLC_HOST=plc-sim และ SIM_FAKE_PI_BATTERY=true)
+docker compose up -d --build
 docker compose logs -f dashboard
+docker compose down
 ```
+
+**ทดสอบกับ mock PLC** — ไม่ต้องแก้ `.env` ไฟล์ `docker-compose.sim.yml` เพิ่ม `plc-sim`, ชี้ gateway ไปที่ mock และเก็บประวัติแยกที่ `logs/sim/gateway.db` (ไม่ปนกับของจริง):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.sim.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.sim.yml down     # ปิดต้องใส่ -f ทั้งสองไฟล์เหมือนกัน
+```
+
+⚠️ ใช้งานจริงแล้วปุ่มบน dashboard สั่งหุ่นขยับจริง ต้องมีคนอยู่หน้างาน และควรตั้ง `DASHBOARD_PASSWORD`
 
 เปิด `http://<IP ของ Pi>:8501` จากมือถือหรือคอมที่อยู่ในวง LAN เดียวกัน (หา IP ด้วย `hostname -I` บน Pi)
 
@@ -77,12 +87,12 @@ test หน้าเว็บช้ากว่า test อื่น (import pan
 
 ### ทดสอบด้วยมือ
 
-1. `docker compose --profile sim up -d --build`
+1. `docker compose -f docker-compose.yml -f docker-compose.sim.yml up -d --build`
 2. เปิด `http://localhost:8501` บนคอม และ `http://<IP เครื่อง>:8501` บนมือถือ
 3. ควรเห็น 🟢 PLC online, State 🏠 Home, แบต 🔋 90 %
 4. กด Start → ✅ started cleaning, State เปลี่ยนเป็น 🧹 Cleaning ในไม่กี่วิ
 5. กด STOP → ✅ stopped
-6. `docker compose stop gateway` → ภายใน 10 วิ แถบขึ้น ⚪ Gateway not updating, กดปุ่มจะได้ ⏱️ no answer
+6. `docker compose -f docker-compose.yml -f docker-compose.sim.yml stop gateway` → ภายใน 10 วิ แถบขึ้น ⚪ Gateway not updating, กดปุ่มจะได้ ⏱️ no answer
 7. แท็บ Schedule: เพิ่มรอบอีก 2 นาที แล้วรอดู state เปลี่ยน
 8. แท็บ History: หลังรันสักพักจะเห็นกราฟแบตและกำลังไฟ
 

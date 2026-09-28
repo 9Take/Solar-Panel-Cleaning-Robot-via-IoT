@@ -20,7 +20,7 @@ Keep the progress tables in `README.md` (Thai + English sections) in sync with t
 - [x] **1. Config + tag map** — `.env` settings, `plc_tags.yaml` loader, Delta device → Modbus address conversion (pure code, no network)
 - [x] **2. Mock PLC** — `app/sim`
   - [x] 2a. Datastore from tag map; only tag-map addresses exist (`StrictSimCore`), others → exception 02
-  - [x] 2b. TCP server `MockPlcServer` (`python -m app.sim`, compose `--profile sim`, host port 5020) + network tests
+  - [x] 2b. TCP server `MockPlcServer` (`python -m app.sim`, compose file `docker-compose.sim.yml`, host port 5020) + network tests
   - [x] 2c. Simulated ladder behavior per `docs/robot-operation.md` using **assumed** M/D tags (owner's choice); replace with real ladder tags later
     - `app/codec.py` (shared with the client), `app/sim/ladder.py` (reference state machine), `app/sim/plant.py` (physics, buttons, E-stop, PZEM, fake Pi battery), `app/sim/runner.py`
 - [x] **3. Read client** — `app/plc_client.py` (`PlcClient`, `plan_reads`): read tags by name (read-only), contiguous-block reads never spanning gaps, `PlcOfflineError` + reconnect with backoff, `PlcReadError` for Modbus exceptions. Dev CLI: `python -m app.read [names] [--watch]`
@@ -68,11 +68,12 @@ Full behavior spec: `docs/robot-operation.md`.
 ## Docker (everything on the Pi runs in containers)
 
 - Nothing is installed on the Pi host except Docker + Compose plugin. Pi must run a **64-bit OS** (image targets `linux/arm64`).
-- Files: `Dockerfile` (python:3.12-slim, non-root user), `docker-compose.yml`, `.dockerignore`.
-- Entry point: `python -m app` → package `app/` (not written yet).
+- Files: multi-stage `Dockerfile` (python:3.12-slim, non-root user; targets `gateway` = default/last, `dashboard` = + Streamlit), `docker-compose.yml` (real use), `docker-compose.sim.yml` (test add-on), `.dockerignore`.
+- Entry point: `python -m app` → package `app/`.
 - Services:
   - `gateway`: the Pi ↔ PLC service. `restart: unless-stopped`.
-  - `plc-sim` (profile `sim`): mock Modbus TCP server (`python -m app.sim`) for testing without the PLC. Set `PLC_HOST=plc-sim` in `.env`.
+  - `dashboard`: Streamlit UI on :8501, SQLite only.
+  - `plc-sim` (only in `docker-compose.sim.yml`): mock Modbus TCP server (`python -m app.sim`). The sim file also overrides the gateway's `PLC_HOST=plc-sim` and sets `HISTORY_DB=logs/sim/gateway.db` for gateway + dashboard, so `.env` always holds the real PLC and sim history never mixes with real history. Never name it `docker-compose.override.yml` (compose would load it by default).
 - Runtime config: `.env` via `env_file` (never baked into the image — `.dockerignore` excludes it); `config/` mounted read-only; `logs/` mounted as a volume.
 - Default bridge network is enough to reach the PLC on the LAN. Use `network_mode: host` only if a real need appears.
 - New services (UI, DB) go in the same `docker-compose.yml`.
@@ -81,7 +82,8 @@ Commands:
 ```bash
 docker compose up -d --build          # run on the Pi
 docker compose logs -f gateway        # follow logs
-docker compose --profile sim up --build   # dev with mock PLC
+docker compose -f docker-compose.yml -f docker-compose.sim.yml up -d --build   # dev with mock PLC
+docker compose -f docker-compose.yml -f docker-compose.sim.yml down
 docker compose down
 ```
 
