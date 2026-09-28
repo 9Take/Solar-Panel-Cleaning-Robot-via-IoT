@@ -58,6 +58,8 @@ app/
   __main__.py      จุดเริ่มโปรแกรม (python -m app)
 config/
   plc_tags.yaml    tag map: ชื่อ -> device ใน PLC
+plc/
+  robot_reference.il  ladder อ้างอิง (Delta IL) สำหรับ ISPSoft — ดู plc/README.md
 tests/             unit tests
 .env.example       ตัวอย่างค่าตั้งค่า (คัดลอกเป็น .env)
 Dockerfile, docker-compose.yml
@@ -273,6 +275,8 @@ app/
   __main__.py      entry point (python -m app)
 config/
   plc_tags.yaml    tag map: name -> PLC device
+plc/
+  robot_reference.il  reference ladder (Delta IL) for ISPSoft — see plc/README.md
 tests/             unit tests
 .env.example       sample settings (copy to .env)
 Dockerfile, docker-compose.yml

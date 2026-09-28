@@ -122,6 +122,8 @@ No fixed parameter lives in code. Two places only:
 
 `docs/robot-operation.md` (Thai) describes movement, states, sensors, I/O, alarms and the draft tag list. Items marked ❓ are unconfirmed assumptions — never treat them as facts; ask the owner. Keep the mock (2c) and tag map consistent with this file.
 
+`plc/robot_reference.il` is the same state machine as Delta IL for ISPSoft (assumed M/D, same as the tag map); `tests/test_ladder_il.py` runs it through `app/sim/il.py` against the plant. Change the IL, `app/sim/ladder.py` and the tag map together.
+
 ## PLC Tag Map
 
 Single source of truth: `config/plc_tags.yaml`. Code refers to tags by name, never by raw address. **Fill in from the ladder program — do not guess addresses.**
