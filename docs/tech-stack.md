@@ -32,12 +32,13 @@ flowchart TB
             md30["MD30C<br/>motor driver"]
             estop["E-stop<br/>ตัดไฟมอเตอร์ (hardware)"]
         end
+
+        mppt["Tuya MPPT<br/>solar charger"]
     end
 
     motor["DC motor<br/>ขับเคลื่อน + แปรง"]
 
     tuya["Tuya Cloud API"]
-    mppt["Tuya MPPT<br/>solar charger"]
 
     user -- "HTTP :8501" --> st
     st -- "อ่านสถานะ / ประวัติ" --> db
@@ -53,8 +54,8 @@ flowchart TB
     batt -- "battery_pct + pi_heartbeat" --> client
 
     client -- "Modbus TCP :502" --> plc
-    batt -- "HTTPS (HMAC-SHA256)" --> tuya
-    mppt -- "WiFi" --> tuya
+    batt -- "ดึง % แบต · HTTPS (HMAC-SHA256)" --> tuya
+    mppt -- "ส่งค่าแบต/solar · WiFi" --> tuya
 
     plc -- "RS485 Modbus RTU" --> pzem
     plc -- "Y0 PWM · Y1 DIR" --> md30
@@ -63,7 +64,7 @@ flowchart TB
     md30 -- "ไฟมอเตอร์" --> motor
 ```
 
-**อ่านแผนภาพ:** Dashboard ไม่คุย Modbus เอง ทุกอย่างผ่าน SQLite. มีแค่ container `gateway` ที่ต่อ PLC และคำสั่งทุกตัวต้องผ่าน `commander.py` ก่อนถึง PLC. ส่วน ladder ใน PLC ตัดสินเรื่องการเคลื่อนที่และความปลอดภัยทั้งหมด. Pi แค่ขอคำสั่งกับส่งค่าแบตให้.
+**อ่านแผนภาพ:** Dashboard ไม่คุย Modbus เอง ทุกอย่างผ่าน SQLite. มีแค่ container `gateway` ที่ต่อ PLC และคำสั่งทุกตัวต้องผ่าน `commander.py` ก่อนถึง PLC. ส่วน ladder ใน PLC ตัดสินเรื่องการเคลื่อนที่และความปลอดภัยทั้งหมด. Pi แค่ขอคำสั่งกับส่งค่าแบตให้. ค่าแบตมาจาก Tuya MPPT ในตู้ ส่งขึ้น Tuya Cloud ทาง WiFi แล้ว Pi ดึงจาก cloud อีกที (Pi ไม่ต่อ MPPT ตรง).
 
 ## Stack แยกตามชั้น
 
