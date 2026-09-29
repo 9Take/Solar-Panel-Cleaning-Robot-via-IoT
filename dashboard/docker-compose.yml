@@ -1,0 +1,27 @@
+# Dashboard mockup, kept separate from the main docker-compose.yml.
+# Run from the repo root, next to the gateway stack:
+#
+#   docker compose up -d                                   # gateway (main compose)
+#   docker compose -f dashboard/docker-compose.yml up -d --build
+#
+# Open http://<pi-ip>:8502. Reads status from the gateway's SQLite DB in ../logs
+# and edits only the schedules table. Paths below are relative to this folder.
+name: solarbot-dashboard-mockup
+
+services:
+  dashboard-mockup:
+    build:
+      context: ..
+      dockerfile: dashboard/Dockerfile
+    image: solarbot-dashboard-mockup:latest
+    env_file:
+      - path: ../.env              # gateway settings (HISTORY_DB, SCHEDULE_TZ, ...)
+        required: false
+      - path: .env                 # dashboard-only settings (weather), see .env.example
+        required: false
+    ports:
+      - "8502:8501"
+    volumes:
+      - ../config:/app/config:ro
+      - ../logs:/app/logs          # read-write: schedules are edited here
+    restart: unless-stopped

@@ -1,6 +1,8 @@
 """Solar Panel Cleaning Robot - monitoring dashboard (mockup).
 
-Run from the repo root:  streamlit run dashboard/app.py
+Docker:  docker compose -f dashboard/docker-compose.yml up -d --build
+Local:   streamlit run dashboard/app.py          (from the repo root)
+Docs:    dashboard/README.md, work log: dashboard/LOG.md
 
 Data source (checked every refresh):
   * Gateway history DB (HISTORY_DB, default logs/gateway.db) if it exists.
@@ -37,7 +39,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def load_dotenv(path):
-    """Read KEY=VALUE lines from the repo's .env into os.environ (real env wins)."""
+    """Read KEY=VALUE lines from a .env file into os.environ (real env wins)."""
     if not path.exists():
         return
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -46,7 +48,8 @@ def load_dotenv(path):
             os.environ.setdefault(key.strip(), value.strip())
 
 
-load_dotenv(ROOT / ".env")
+load_dotenv(ROOT / "dashboard" / ".env")   # dashboard-only settings (weather)
+load_dotenv(ROOT / ".env")                 # gateway settings (HISTORY_DB, SCHEDULE_TZ, ...)
 TAGS_FILE = ROOT / os.environ.get("PLC_TAGS_FILE", "config/plc_tags.yaml")
 HISTORY_DB = ROOT / os.environ.get("HISTORY_DB", "logs/gateway.db")
 SCHEDULE_TZ = ZoneInfo(os.environ.get("SCHEDULE_TZ", "Asia/Bangkok"))
@@ -128,7 +131,7 @@ def fetch_weather(lat, lon, tz):
 
 
 def simulated_weather(reason):
-    now = datetime.now()
+    now = datetime.now(SCHEDULE_TZ)
     rain = [5, 5, 10, 20, 45, 70, 60, 30]
     temp = [32, 33, 34, 34, 33, 30, 29, 28]
     hourly = [{"เวลา": (now + timedelta(hours=h)).strftime("%H:00"),
@@ -544,7 +547,7 @@ def position_bar(at_end1, at_end2, is_home, moving_to_end2):
 
 
 def fmt_ts(ts):
-    return datetime.fromtimestamp(ts).strftime("%H:%M:%S")
+    return datetime.fromtimestamp(ts, SCHEDULE_TZ).strftime("%H:%M:%S")
 
 
 @st.fragment(run_every="1s")
@@ -627,7 +630,7 @@ def live_section():
         if len(hist) >= 2:
             df = pd.DataFrame(hist, columns=["ts", "แรงดัน (V)", "แบต (%)"])
             df["เวลา"] = pd.to_datetime(df["ts"], unit="s", utc=True).dt.tz_convert(
-                datetime.now().astimezone().tzinfo)
+                SCHEDULE_TZ)
             st.line_chart(df.set_index("เวลา")[["แรงดัน (V)"]], height=120)
             st.caption("แรงดัน 30 นาทีล่าสุด" + (" (snapshot จาก gateway)" if LIVE else ""))
 
