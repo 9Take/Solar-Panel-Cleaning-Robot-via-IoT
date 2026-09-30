@@ -23,7 +23,7 @@
 
 ```bash
 cp .env.example .env                        # ค่าของ gateway (ถ้ายังไม่มี)
-cp dashboard/.env.example dashboard/.env    # พิกัดสภาพอากาศตั้งไว้ที่ ต.หน้าไม้ แล้ว
+cp dashboard/.env.example dashboard/.env    # พิกัดสภาพอากาศตั้งไว้ที่ I NOW CO.,LTD. แล้ว
 docker compose up -d                        # gateway (compose หลัก)
 docker compose -f dashboard/docker-compose.yml up -d --build
 docker compose -f dashboard/docker-compose.yml logs -f
