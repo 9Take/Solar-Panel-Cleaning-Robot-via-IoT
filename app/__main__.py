@@ -10,9 +10,10 @@ Runs until SIGINT/SIGTERM (`docker compose down`).
 import asyncio
 import logging
 import signal
+import time
 from zoneinfo import ZoneInfo
 
-from app.battery import BatteryFeeder, tuya_battery_source
+from app.battery import BatteryFeeder, fake_battery_source, tuya_battery_source
 from app.command_queue import CommandQueueWorker
 from app.commander import PlcCommander
 from app.config import Settings
@@ -44,7 +45,16 @@ async def main() -> None:
              asyncio.create_task(scheduler.run_forever())]
 
     missing = settings.missing_tuya_keys()
-    if missing:
+    if settings.battery_fake_pct is not None:
+        message = (f"BATTERY_FAKE_PCT set: feeding a fixed {settings.battery_fake_pct:g}% instead of Tuya; "
+                   "the PLC cannot see the real battery (bench test only)")
+        log.warning("%s", message)
+        store.add_event(time.time(), "battery_fake", message)
+        feeder = BatteryFeeder(plc, fake_battery_source(settings.battery_fake_pct), store,
+                               settings.pi_heartbeat_interval_s, settings.tuya_poll_interval_s,
+                               settings.battery_max_age_s)
+        tasks.append(asyncio.create_task(feeder.run_forever()))
+    elif missing:
         log.warning("Battery feed disabled (%s empty): the PLC gets no battery_pct / pi_heartbeat "
                     "from this gateway", ", ".join(missing))
     else:

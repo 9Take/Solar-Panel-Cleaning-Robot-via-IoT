@@ -27,3 +27,14 @@ def test_invalid_port_fails(monkeypatch):
     monkeypatch.setenv("PLC_PORT", "70000")
     with pytest.raises(ValidationError):
         Settings(_env_file=None)
+
+
+def test_battery_fake_pct_off_by_default_and_bounded(monkeypatch):
+    monkeypatch.setenv("PLC_HOST", "10.0.0.5")
+    monkeypatch.delenv("BATTERY_FAKE_PCT", raising=False)
+    assert Settings(_env_file=None).battery_fake_pct is None
+    monkeypatch.setenv("BATTERY_FAKE_PCT", "90")
+    assert Settings(_env_file=None).battery_fake_pct == 90.0
+    monkeypatch.setenv("BATTERY_FAKE_PCT", "101")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)

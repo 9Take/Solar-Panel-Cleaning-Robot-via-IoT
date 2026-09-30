@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     tuya_poll_interval_s: float = Field(60.0, ge=10)
     battery_max_age_s: float = Field(300.0, gt=0)  # older Tuya reading -> stop the heartbeat
     pi_heartbeat_interval_s: float = Field(2.0, gt=0)
+    # Bench test only: feed this fixed % instead of Tuya (PLC trusts it for may-start). Unset = off.
+    battery_fake_pct: float | None = Field(None, ge=0, le=100)
 
     # SecretStr hides the value in repr/logs; call .get_secret_value() only where needed.
     api_key: SecretStr | None = None

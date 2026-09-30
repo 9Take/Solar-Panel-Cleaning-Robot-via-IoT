@@ -70,6 +70,14 @@ def tuya_battery_source(settings: Settings) -> Callable[[], Awaitable[float]]:
     return lambda: asyncio.to_thread(read)   # urllib blocks; keep the event loop free
 
 
+def fake_battery_source(pct: float) -> Callable[[], Awaitable[float]]:
+    """Async function always returning `pct` (BATTERY_FAKE_PCT, bench test without Tuya)."""
+    async def read() -> float:
+        return pct
+
+    return read
+
+
 class BatteryFeeder:
     def __init__(
         self,

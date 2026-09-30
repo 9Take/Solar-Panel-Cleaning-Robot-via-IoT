@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from app.battery import BatteryFeeder, BatteryReading, battery_to_feed, tuya_battery_source
+from app.battery import (BatteryFeeder, BatteryReading, battery_to_feed, fake_battery_source,
+                         tuya_battery_source)
 from app.config import Settings
 from app.history import HistoryStore
 from app.plc_client import PlcClient, PlcOfflineError
@@ -233,3 +234,7 @@ def test_ladder_trusts_battery_while_fed_and_alarms_when_held():
     fed, held = asyncio.run(main())
     assert fed == {"alarm_code": Alarm.NONE, "battery_pct": 88}
     assert held == Alarm.HEARTBEAT_LOST
+
+
+def test_fake_battery_source_returns_fixed_pct():
+    assert asyncio.run(fake_battery_source(90.0)()) == 90.0
