@@ -60,10 +60,15 @@ class Schedule:
     created_ts: float
     last_run: str | None
 
-    def describe(self) -> str:
+    @property
+    def summary(self) -> str:
+        """Days and cycles, e.g. "mon,fri, 2 cycle(s)"."""
         days = "every day" if len(self.days) == 7 else ",".join(self.days)
         cycles = f"{self.cycles} cycle(s)" if self.cycles else "PLC cycles_setpoint"
-        return f"#{self.id} {self.at} {days}, {cycles}"
+        return f"{days}, {cycles}"
+
+    def describe(self) -> str:
+        return f"#{self.id} {self.at} {self.summary}"
 
 
 # --- table access (shared by the scheduler, the CLI and a future UI) -------------------

@@ -1,0 +1,3 @@
+# Dashboard only (Dockerfile target "dashboard"); the gateway image does not include it.
+-r requirements.txt
+streamlit>=1.64,<2
