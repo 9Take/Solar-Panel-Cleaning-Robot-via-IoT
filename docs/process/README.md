@@ -36,7 +36,7 @@
 test ทั้งหมดรันบนเครื่อง dev ด้วย venv (image Docker ไม่มี pytest):
 
 ```bash
-.venv/bin/python -m pytest -q                 # ทั้งหมด (207 test, ~15 วินาที)
+.venv/bin/python -m pytest -q                 # ทั้งหมด (230 test, ~25 วินาที)
 .venv/bin/python -m pytest tests/test_schedule.py -v   # เฉพาะไฟล์
 .venv/bin/python -m pytest -k heartbeat -v    # เฉพาะชื่อที่มีคำนี้
 ```

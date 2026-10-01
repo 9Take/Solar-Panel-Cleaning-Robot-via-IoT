@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import streamlit as st
 
-from app import schedule
+from app import schedule, weather
 from app.config import Settings
 from app.dashboard import data
 from app.history import HistoryStore
@@ -86,6 +86,70 @@ def status_panel() -> None:
                    border=True)
     if status.age_s is not None:
         st.caption(f"Updated {status.age_s:.0f}s ago · refreshes every {settings().dashboard_refresh_s:g}s")
+
+
+# --- weather --------------------------------------------------------------------------
+
+WEATHER_SERIES = [   # (column, title, unit) — one chart each, same time axis as the history charts
+    ("cloud_cover", "Cloud cover (%)", "%"),
+    ("temperature_2m", "Temperature (°C)", "°C"),
+    ("relative_humidity_2m", "Humidity (%)", "%"),
+]
+
+
+@st.cache_data(ttl=settings().weather_refresh_s, show_spinner=False)
+def get_weather(lat: float, lon: float, tz: str) -> weather.Weather:
+    """Cached per refresh period; failures are not cached, so the next run retries."""
+    return weather.fetch(lat, lon, tz)
+
+
+def load_weather() -> tuple[weather.Weather | None, str | None]:
+    """(weather, None), (None, reason it is unavailable) or (None, None) when weather is off."""
+    s = settings()
+    if s.weather_lat is None or s.weather_lon is None:
+        return None, None
+    try:
+        return get_weather(s.weather_lat, s.weather_lon, s.schedule_tz), None
+    except weather.WeatherError as exc:
+        return None, str(exc)
+
+
+@st.fragment(run_every=settings().weather_refresh_s)
+def weather_panel() -> None:
+    w, error = load_weather()
+    if w is None and error is None:
+        st.caption("Weather off: set WEATHER_LAT / WEATHER_LON in .env")
+        return
+    place = f" · {settings().weather_place}" if settings().weather_place else ""
+    st.markdown(f"##### 🌤️ Weather at the panels{place}")
+    if error:
+        st.warning(f"Weather unavailable: {error}", icon="🌐")
+        return
+    cols = st.columns(3)
+    cols[0].metric("Cloud cover", data.weather_label(w.current["cloud_cover"], "%"), border=True,
+                   help="More cloud, less sunlight on the panels: solar charging drops")
+    cols[1].metric("Temperature", data.weather_label(w.current["temperature_2m"], "°C", 1), border=True,
+                   help="Hotter panels convert less light to power "
+                        "(typically about -0.4 % per °C of panel temperature above 25 °C)")
+    cols[2].metric("Humidity", data.weather_label(w.current["relative_humidity_2m"], "%"), border=True,
+                   help="Humid, hazy air scatters some sunlight")
+    st.caption(f"Open-Meteo · {w.at:%H:%M} · trends in the History tab")
+
+
+def weather_charts(since: datetime, until: datetime) -> None:
+    w, error = load_weather()
+    if w is None:
+        if error:
+            st.caption(f"Weather unavailable: {error}")
+        return
+    rows = data.weather_history(w, since, until)
+    if not rows:
+        return
+    st.markdown("**Weather at the panels** · compare with the battery and power charts above")
+    df = pd.DataFrame(rows)
+    for column, title, unit in WEATHER_SERIES:
+        st.markdown(f"<small>{title}</small>", unsafe_allow_html=True)
+        st.line_chart(df, x="time", y=column, color=SERIES_COLOR, x_label="", y_label=unit, height=160)
 
 
 # --- commands -------------------------------------------------------------------------
@@ -179,6 +243,7 @@ def schedule_panel(tz: ZoneInfo) -> None:
 def history_panel(tz: ZoneInfo) -> None:
     span = st.segmented_control("Range", list(HISTORY_RANGES), default="6 hours")
     since = time.time() - HISTORY_RANGES[span or "6 hours"] * 3600
+    until = time.time()
     with open_store() as store:
         rows = data.history(store, since, ["battery_pct", "pzem_power"], tz)
         events = data.recent_events(store, tz)
@@ -190,6 +255,7 @@ def history_panel(tz: ZoneInfo) -> None:
         st.line_chart(df, x="time", y="pzem_power", color=SERIES_COLOR, x_label="", y_label="W", height=220)
     else:
         st.info("No history in this range yet.")
+    weather_charts(datetime.fromtimestamp(since, tz), datetime.fromtimestamp(until, tz))
     st.markdown("**Events**")
     st.dataframe(pd.DataFrame(events, columns=["time", "kind", "message"]), hide_index=True, height=320)
 
@@ -202,6 +268,7 @@ def main() -> None:
     tz = ZoneInfo(settings().schedule_tz)
     stop_button()
     status_panel()
+    weather_panel()
     tab_control, tab_schedule, tab_history = st.tabs(["Control", "Schedule", "History"])
     with tab_control:
         control_panel()
