@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 from app import command_queue
 from app.history import HistoryStore
 from app.robot import Alarm, State, describe
+from app.weather import Weather
 
 # `latest` older than this means the gateway stopped updating it (not running / crashed).
 STALE_S = 10.0
@@ -75,6 +76,15 @@ def history(store: HistoryStore, since_ts: float, tags: list[str], tz: ZoneInfo)
     """Snapshot rows since since_ts: [{"time": datetime, tag: value, ...}]."""
     return [{"time": datetime.fromtimestamp(ts, tz), **{t: data.get(t) for t in tags}}
             for ts, data in store.snapshots(since_ts)]
+
+
+def weather_history(weather: Weather, since: datetime, until: datetime) -> list[dict]:
+    """Hourly weather rows in [since, until] (no forecast hours), for charts next to the history."""
+    return [row for row in weather.hourly if since <= row["time"] <= until]
+
+
+def weather_label(value, unit: str, decimals: int = 0) -> str:
+    return "–" if value is None else f"{value:.{decimals}f} {unit}"
 
 
 def recent_events(store: HistoryStore, tz: ZoneInfo, limit: int = 100) -> list[dict]:

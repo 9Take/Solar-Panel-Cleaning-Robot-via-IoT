@@ -49,12 +49,23 @@ class Settings(BaseSettings):
     dashboard_password: SecretStr = SecretStr("")
     dashboard_refresh_s: float = Field(2.0, ge=1)
 
+    # Weather at the panels (Open-Meteo, dashboard only). Empty lat/lon = weather off.
+    weather_lat: float | None = Field(None, ge=-90, le=90)
+    weather_lon: float | None = Field(None, ge=-180, le=180)
+    weather_place: str = ""               # name shown next to the weather
+    weather_refresh_s: float = Field(600.0, ge=60)   # Open-Meteo updates its model hourly
+
     history_db: Path = Path("logs/gateway.db")
     snapshot_interval_s: float = Field(10.0, gt=0)
     history_retention_days: float = Field(30.0, gt=0)
 
     log_dir: Path = Path("logs")
     log_level: str = "INFO"
+
+    @field_validator("weather_lat", "weather_lon", mode="before")
+    @classmethod
+    def _empty_is_none(cls, value):
+        return None if isinstance(value, str) and not value.strip() else value
 
     @field_validator("schedule_tz")
     @classmethod
