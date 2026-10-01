@@ -66,7 +66,7 @@ flowchart TB
     done -- ครบ --> home
 ```
 
-**อ่านแผนภาพ:** ถ้า Pi ปฏิเสธ จะบันทึกเหตุผลลง `events` ไว้ให้ dashboard แสดง. แต่ถ้า Pi ส่งคำสั่งผ่านไปแล้ว ladder ยังตัดสินเองเสมอว่าจะออกเดินหรือไม่ (แบต ≥ 80 %, heartbeat). ปุ่มหน้าเครื่องเข้า ladder ตรง ไม่ผ่าน Pi.
+**อ่านแผนภาพ:** ถ้า Pi ปฏิเสธ จะบันทึกเหตุผลลง `events` ไว้ให้ dashboard แสดง. แต่ถ้า Pi ส่งคำสั่งผ่านไปแล้ว ladder ยังตัดสินเองเสมอว่าจะออกเดินหรือไม่ (แบต ≥ เกณฑ์ใน PLC, heartbeat). เกณฑ์ตาม spec คือ 80 % แต่ตอนเทสตั้งใน PLC เป็น 40 % ส่วน pre-check ฝั่ง Pi ยังใช้ 80 % ดู [open-decisions.md](open-decisions.md) ข้อ 2. ปุ่มหน้าเครื่องเข้า ladder ตรง ไม่ผ่าน Pi.
 
 ### เหตุแทรกระหว่างเดิน (Cleaning / Returning)
 
@@ -147,7 +147,7 @@ flowchart TB
     done -- reached --> home
 ```
 
-**Reading the diagram:** When the Pi refuses, it logs the reason in `events` for the dashboard to show. Once the Pi has sent the command, the ladder still decides on its own whether to move (battery ≥ 80 %, heartbeat). The front button goes straight to the ladder, not through the Pi.
+**Reading the diagram:** When the Pi refuses, it logs the reason in `events` for the dashboard to show. Once the Pi has sent the command, the ladder still decides on its own whether to move (battery ≥ the PLC threshold, heartbeat). The spec says 80 %; for testing the PLC is set to 40 %, while the Pi pre-check still uses 80 %; see [open-decisions.md](open-decisions.md) item 2. The front button goes straight to the ladder, not through the Pi.
 
 ### Interrupts While Moving (Cleaning / Returning)
 
