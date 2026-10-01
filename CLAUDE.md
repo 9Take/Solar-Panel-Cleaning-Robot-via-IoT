@@ -143,4 +143,5 @@ Single source of truth: `config/plc_tags.yaml`. Code refers to tags by name, nev
 - PLC IP address, Modbus unit/slave ID, whether Modbus TCP server is enabled on the PLC
 - Full tag map (M/D devices used in the ladder for commands, status, alarms, battery)
 - Battery/charging measurement: which D registers, scaling/units
-- UI/monitoring stack and whether remote (internet) access is needed for the demo
+- Whether remote (internet) access is needed for the demo
+- Pending owner decisions (Tuya battery source, Python vs PLC battery threshold, fake-battery test branch) are tracked in `docs/open-decisions.md` — keep it updated
